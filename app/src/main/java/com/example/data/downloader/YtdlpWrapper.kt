@@ -45,9 +45,17 @@ class YtdlpWrapper(private val context: Context) {
         return binaryFile.exists() && binaryFile.canExecute()
     }
 
+    private fun isValidHttpUrl(url: String): Boolean {
+        val lower = url.trim().lowercase()
+        return lower.startsWith("http://") || lower.startsWith("https://")
+    }
+
     fun resolveFormats(url: String): Result<YtdlpMediaInfo> {
         if (!isAvailable()) {
             return Result.failure(IllegalStateException("yt-dlp binary is not installed in app files directory"))
+        }
+        if (!isValidHttpUrl(url)) {
+            return Result.failure(IllegalArgumentException("Invalid URL protocol. Only HTTP and HTTPS are permitted."))
         }
 
         return try {
@@ -55,7 +63,8 @@ class YtdlpWrapper(private val context: Context) {
                 binaryFile.absolutePath,
                 "--dump-json",
                 "--no-playlist",
-                url
+                "--",
+                url.trim()
             ).redirectErrorStream(true).start()
 
             val reader = BufferedReader(InputStreamReader(process.inputStream))
@@ -120,7 +129,7 @@ class YtdlpWrapper(private val context: Context) {
     }
 
     fun download(url: String, formatId: String, outputPath: String): Flow<YtdlpProgress> = flow {
-        if (!isAvailable()) {
+        if (!isAvailable() || !isValidHttpUrl(url)) {
             emit(YtdlpProgress(0f, 0L, 0L, "0 KB/s", "N/A"))
             return@flow
         }
@@ -130,7 +139,8 @@ class YtdlpWrapper(private val context: Context) {
             "-f", formatId,
             "-o", outputPath,
             "--newline",
-            url
+            "--",
+            url.trim()
         ).redirectErrorStream(true).start()
 
         val reader = BufferedReader(InputStreamReader(process.inputStream))
@@ -164,7 +174,7 @@ class YtdlpWrapper(private val context: Context) {
     }.flowOn(Dispatchers.IO)
 
     fun extractAudio(url: String, outputPath: String, audioQuality: String = "192K"): Flow<YtdlpProgress> = flow {
-        if (!isAvailable()) {
+        if (!isAvailable() || !isValidHttpUrl(url)) {
             emit(YtdlpProgress(0f, 0L, 0L, "0 KB/s", "N/A"))
             return@flow
         }
@@ -176,7 +186,8 @@ class YtdlpWrapper(private val context: Context) {
             "--audio-quality", audioQuality,
             "-o", outputPath,
             "--newline",
-            url
+            "--",
+            url.trim()
         ).redirectErrorStream(true).start()
 
         val reader = BufferedReader(InputStreamReader(process.inputStream))

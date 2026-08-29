@@ -1,20 +1,22 @@
 package com.example
 
 import android.app.Application
+import android.content.ComponentCallbacks2
 import android.os.Build
 import android.webkit.WebView
-import java.io.File
-import android.content.ComponentCallbacks2
-import android.content.res.Configuration
+import com.example.data.adblock.AdBlockManager
 import com.example.data.downloader.DownloadQueueManager
+import com.example.data.local.AegisDatabase
+import com.example.data.security.AttestationManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.GlobalScope
-import com.example.data.local.AegisDatabase
-import com.example.data.adblock.AdBlockManager
+import java.io.File
 
 class AegisApplication : Application() {
+
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate() {
         super.onCreate()
@@ -31,29 +33,22 @@ class AegisApplication : Application() {
             e.printStackTrace()
         }
 
-        // 1. Pre-warm WebView on background thread
-        GlobalScope.launch(Dispatchers.IO) {
-            try {
-                WebView(this@AegisApplication).destroy()
-            } catch (e: Exception) { /* ignore */ }
-        }
-
-        // 2. Initialize cache dirs synchronously
+        // 1. Initialize cache and storage dirs synchronously
         initializeCacheDirs()
 
-        // 3. Pre-load adblock rules on IO thread
-        GlobalScope.launch(Dispatchers.IO) {
+        // 2. Pre-load adblock rules on IO thread
+        applicationScope.launch {
             AdBlockManager.warmup()
         }
 
-        // 4. Initialize Room database on IO thread
-        GlobalScope.launch(Dispatchers.IO) {
+        // 3. Initialize Room database on IO thread
+        applicationScope.launch {
             AegisDatabase.getDatabase(this@AegisApplication)
         }
         
-        // 5. Verify Attestation Log Integrity
-        GlobalScope.launch(Dispatchers.IO) {
-            val am = com.example.data.security.AttestationManager(this@AegisApplication)
+        // 4. Verify Attestation Log Integrity
+        applicationScope.launch {
+            val am = AttestationManager(this@AegisApplication)
             if (!am.verifyLogIntegrity()) {
                 // Revert to safe mode if log is tampered
                 am.revertToSafeMode()
@@ -67,7 +62,7 @@ class AegisApplication : Application() {
             // Trim memory when UI is hidden
             System.gc()
         }
-        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) {
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_COMPLETE) {
             // Emergency cleanup
             try {
                 DownloadQueueManager.getInstance(this).pauseAll()

@@ -17,10 +17,12 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -110,6 +112,9 @@ fun BrowserMainScreen(
     val featureChips by viewModel.featureChips.collectAsStateWithLifecycle()
     val activeFeatureId by viewModel.activeFeatureId.collectAsStateWithLifecycle()
 
+    // Overflow Menu Open state (default true for AEGIS-UI-001 Reference Screen)
+    var isOverflowMenuOpen by remember { mutableStateOf(true) }
+
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
@@ -141,9 +146,10 @@ fun BrowserMainScreen(
     val isOmniboxVisible = currentRoute == Screen.NewTab.route ||
             (currentRoute != null && currentRoute.startsWith("web"))
 
-    // BackHandler prioritizing: 1. Overlays, 2. WebView back history, 3. Compose Backstack, 4. Exit App
+    // BackHandler prioritizing: 1. Overlays (Overflow Menu, Media Grabber, etc.), 2. WebView back history, 3. Compose Backstack, 4. Exit App
     BackHandler {
         when {
+            isOverflowMenuOpen -> isOverflowMenuOpen = false
             findInPageState.isActive -> viewModel.closeFindInPage()
             isMediaGrabberOpen -> viewModel.dismissMediaGrabber()
             isAttestationDialogOpen -> viewModel.dismissAttestationDialog()
@@ -200,7 +206,8 @@ fun BrowserMainScreen(
                         onFindInPageClick = { viewModel.openFindInPage() },
                         onAutoFillClick = {
                             navController.navigate(AegisRoutes.AUTOFILL) { launchSingleTop = true }
-                        }
+                        },
+                        onToggleMenu = { isOverflowMenuOpen = !isOverflowMenuOpen }
                     )
 
                     if (findInPageState.isActive) {
@@ -289,8 +296,9 @@ fun BrowserMainScreen(
 
                 BottomToolbar(
                     tabCount = tabs.size,
-                    activeDownloadCount = activeDownloadCount,
-                    isDesktopMode = activeTab.isDesktopMode,
+                    canGoBack = activeTab.canGoBack && currentRoute?.startsWith("web") == true,
+                    canGoForward = false,
+                    isMenuOpen = isOverflowMenuOpen,
                     onGoBack = {
                         if (activeTab.canGoBack && currentRoute?.startsWith("web") == true) {
                             viewModel.triggerWebGoBack()
@@ -315,46 +323,8 @@ fun BrowserMainScreen(
                     onOpenTabs = {
                         navController.navigate(AegisRoutes.TABS) { launchSingleTop = true }
                     },
-                    onOpenDownloads = {
-                        navController.navigate(Screen.Downloads.route) { launchSingleTop = true }
-                    },
-                    onOpenBookmarksHistory = {
-                        navController.navigate(Screen.Bookmarks.route) { launchSingleTop = true }
-                    },
-                    onOpenClearData = {
-                        viewModel.clearBrowsingData()
-                        scope.launch {
-                            snackbarHostState.showSnackbar("Données de navigation effacées")
-                        }
-                    },
-                    onOpenFindInPage = { viewModel.openFindInPage() },
-                    onOpenReaderMode = {
-                        viewModel.openReaderMode()
-                        navController.navigate(Screen.Reader.createRoute(activeTab.url)) { launchSingleTop = true }
-                    },
-                    onOpenAutoFill = {
-                        navController.navigate(AegisRoutes.AUTOFILL) { launchSingleTop = true }
-                    },
-                    onOpenAiAssistant = {
-                        viewModel.openAiAssistant(AiTaskType.DEEP_REASONING)
-                        navController.navigate(AegisRoutes.AI_ASSISTANT) { launchSingleTop = true }
-                    },
-                    onOpenShields = {
-                        navController.navigate(AegisRoutes.SHIELDS) { launchSingleTop = true }
-                    },
-                    onNewTab = { isIncognito ->
-                        viewModel.addNewTab("about:home", isIncognito)
-                        navController.navigate(Screen.NewTab.route) { launchSingleTop = true }
-                    },
-                    onToggleDesktopMode = { viewModel.toggleDesktopMode() },
-                    onAddBookmark = {
-                        viewModel.addCurrentPageToBookmarks()
-                        scope.launch {
-                            snackbarHostState.showSnackbar("Enregistré dans les marque-pages : ${activeTab.title.take(30)}")
-                        }
-                    },
-                    onOpenSettings = {
-                        navController.navigate(Screen.Settings.route) { launchSingleTop = true }
+                    onToggleMenu = {
+                        isOverflowMenuOpen = !isOverflowMenuOpen
                     }
                 )
             }
@@ -367,6 +337,55 @@ fun BrowserMainScreen(
             modifier = Modifier.padding(innerPadding),
             snackbarHostState = snackbarHostState,
             onNavigateToWeb = { url -> navigateToWeb(url) }
+        )
+    }
+
+    // Aegis Overflow Menu Overlay (AEGIS-UI-001 Reference Screen)
+    if (isOverflowMenuOpen) {
+        com.example.ui.components.BrowserOverflowMenuSheet(
+            isSafeModeEnabled = safeModeState.isSafeModeActive,
+            isDesktopMode = activeTab.isDesktopMode,
+            onDismiss = { isOverflowMenuOpen = false },
+            onNewTab = { isIncognito ->
+                viewModel.addNewTab("about:home", isIncognito)
+                navController.navigate(Screen.NewTab.route) { launchSingleTop = true }
+            },
+            onOpenHistory = {
+                navController.navigate(Screen.Bookmarks.route) { launchSingleTop = true }
+            },
+            onOpenBookmarks = {
+                navController.navigate(Screen.Bookmarks.route) { launchSingleTop = true }
+            },
+            onOpenDownloads = {
+                navController.navigate(Screen.Downloads.route) { launchSingleTop = true }
+            },
+            onDownloadDetectedMedia = {
+                viewModel.openMediaGrabber()
+                navController.navigate(Screen.MediaGrabber.route) { launchSingleTop = true }
+            },
+            onOpenDownloadQueue = {
+                navController.navigate(Screen.Downloads.route) { launchSingleTop = true }
+            },
+            onToggleSafeMode = { enabled ->
+                viewModel.toggleSafeMode(enabled)
+                scope.launch {
+                    snackbarHostState.showSnackbar(if (enabled) "Safe Mode activé" else "Safe Mode désactivé")
+                }
+            },
+            onOpenSitePermissions = {
+                navController.navigate(AegisRoutes.SHIELDS) { launchSingleTop = true }
+            },
+            onOpenPrivacySettings = {
+                navController.navigate(AegisRoutes.SHIELDS) { launchSingleTop = true }
+            },
+            onOpenSettings = {
+                navController.navigate(Screen.Settings.route) { launchSingleTop = true }
+            },
+            onOpenHelp = {
+                scope.launch {
+                    snackbarHostState.showSnackbar("Aegis Browser — Navigation privée et sécurisée")
+                }
+            }
         )
     }
 

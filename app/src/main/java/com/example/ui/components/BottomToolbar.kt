@@ -1,6 +1,9 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -8,28 +11,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.BookmarkBorder
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,37 +33,27 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.AegisAmberSecondary
+import com.example.ui.theme.AegisBrowserChrome
 import com.example.ui.theme.AegisCyanPrimary
+import com.example.ui.theme.AegisSeparator
+import com.example.ui.theme.AegisTextPrimary
+import com.example.ui.theme.AegisTextSecondary
 
 @Composable
 fun BottomToolbar(
-    tabCount: Int,
-    activeDownloadCount: Int,
-    isDesktopMode: Boolean,
-    onGoBack: () -> Unit,
-    onGoForward: () -> Unit,
-    onGoHome: () -> Unit,
-    onOpenTabs: () -> Unit,
-    onOpenDownloads: () -> Unit,
-    onOpenBookmarksHistory: () -> Unit,
-    onOpenClearData: () -> Unit,
-    onOpenFindInPage: () -> Unit,
-    onOpenReaderMode: () -> Unit,
-    onOpenAutoFill: () -> Unit,
-    onOpenAiAssistant: () -> Unit,
-    onOpenShields: () -> Unit,
-    onNewTab: (Boolean) -> Unit,
-    onToggleDesktopMode: () -> Unit,
-    onAddBookmark: () -> Unit,
-    onOpenSettings: () -> Unit,
+    tabCount: Int = 3,
+    canGoBack: Boolean = false,
+    canGoForward: Boolean = false,
+    isMenuOpen: Boolean = false,
+    onGoBack: () -> Unit = {},
+    onGoForward: () -> Unit = {},
+    onGoHome: () -> Unit = {},
+    onOpenTabs: () -> Unit = {},
+    onToggleMenu: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var isMenuSheetOpen by remember { mutableStateOf(false) }
-
     Surface(
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 8.dp,
+        color = AegisBrowserChrome,
         modifier = modifier
             .fillMaxWidth()
             .height(56.dp)
@@ -76,104 +61,100 @@ fun BottomToolbar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp),
+                .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceAround
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Home (Accueil - Screenshot 4)
+            // 1. Back (Disabled on NTP)
+            IconButton(
+                onClick = onGoBack,
+                enabled = canGoBack,
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("toolbar_back_button")
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Retour",
+                    tint = if (canGoBack) AegisTextPrimary else AegisTextSecondary.copy(alpha = 0.4f),
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            // 2. Forward (Disabled on NTP)
+            IconButton(
+                onClick = onGoForward,
+                enabled = canGoForward,
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("toolbar_forward_button")
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = "Suivant",
+                    tint = if (canGoForward) AegisTextPrimary else AegisTextSecondary.copy(alpha = 0.4f),
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            // 3. Home / New Tab
             IconButton(
                 onClick = onGoHome,
-                modifier = Modifier.testTag("nav_home_button")
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("toolbar_home_button")
             ) {
                 Icon(
                     imageVector = Icons.Default.Home,
                     contentDescription = "Accueil",
-                    tint = AegisCyanPrimary,
+                    tint = AegisTextPrimary,
                     modifier = Modifier.size(24.dp)
                 )
             }
 
-            // Bookmarks (Favoris - Screenshot 4)
-            IconButton(
-                onClick = onOpenBookmarksHistory,
-                modifier = Modifier.testTag("nav_bookmarks_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.BookmarkBorder,
-                    contentDescription = "Favoris",
-                    tint = Color.White.copy(alpha = 0.85f),
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-
-            // Search (Rechercher - Screenshot 4)
-            IconButton(
-                onClick = onGoHome,
-                modifier = Modifier.testTag("nav_search_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = "Recherche",
-                    tint = Color.White.copy(alpha = 0.85f),
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-
-            // Tab Switcher with Count Badge (7 in square - Screenshot 4)
+            // 4. Tabs Counter (e.g. [ 3 ])
             IconButton(
                 onClick = onOpenTabs,
-                modifier = Modifier.testTag("nav_tabs_button")
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("toolbar_tabs_counter_button")
             ) {
                 Box(
                     modifier = Modifier
-                        .size(24.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                        .size(22.dp)
+                        .border(1.8.dp, AegisTextPrimary, RoundedCornerShape(5.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = if (tabCount > 99) "99+" else "$tabCount",
+                        text = "$tabCount",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = AegisTextPrimary
                     )
                 }
             }
 
-            // 3-Dots Overflow Menu (⋮ - Screenshot 1, 2, 3, 4)
-            IconButton(
-                onClick = { isMenuSheetOpen = true },
-                modifier = Modifier.testTag("nav_menu_button")
+            // 5. 3-Dots Overflow Menu (with active pill highlight when open)
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(if (isMenuOpen) Color(0xFF262B33) else Color.Transparent)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = ripple(bounded = true, color = AegisCyanPrimary),
+                        onClick = onToggleMenu
+                    )
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                    .testTag("toolbar_overflow_menu_button"),
+                contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Default.MoreVert,
-                    contentDescription = "Menu Options",
-                    tint = Color.White.copy(alpha = 0.85f),
+                    contentDescription = "Menu Aegis",
+                    tint = AegisTextPrimary,
                     modifier = Modifier.size(24.dp)
                 )
             }
         }
-    }
-
-    if (isMenuSheetOpen) {
-        BrowserOverflowMenuSheet(
-            isDesktopMode = isDesktopMode,
-            onDismiss = { isMenuSheetOpen = false },
-            onGoForward = onGoForward,
-            onReload = onGoHome,
-            onAddBookmark = onAddBookmark,
-            onOpenDownloads = onOpenDownloads,
-            onOpenShields = onOpenShields,
-            onNewTab = onNewTab,
-            onOpenTabs = onOpenTabs,
-            onOpenBookmarksHistory = onOpenBookmarksHistory,
-            onOpenClearData = onOpenClearData,
-            onOpenAutoFill = onOpenAutoFill,
-            onOpenAiAssistant = onOpenAiAssistant,
-            onOpenFindInPage = onOpenFindInPage,
-            onOpenReaderMode = onOpenReaderMode,
-            onToggleDesktopMode = onToggleDesktopMode,
-            onOpenSettings = onOpenSettings
-        )
     }
 }

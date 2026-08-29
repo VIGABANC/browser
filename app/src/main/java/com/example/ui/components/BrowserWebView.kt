@@ -109,7 +109,7 @@ fun BrowserWebView(
                 builtInZoomControls = true
                 displayZoomControls = false
                 mediaPlaybackRequiresUserGesture = false
-                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                 cacheMode = if (tab.isIncognito) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
             }
 
@@ -153,20 +153,20 @@ fun BrowserWebView(
     // Handle AutoFill Injection
     LaunchedEffect(autoFillCredential) {
         autoFillCredential?.let { (username, password) ->
-            val safeUser = username.replace("'", "\\'")
-            val safePass = password.replace("'", "\\'")
+            val quotedUser = org.json.JSONObject.quote(username)
+            val quotedPass = org.json.JSONObject.quote(password)
             val script = """
                 (function() {
                     try {
                         var userInputs = document.querySelectorAll('input[type="text"], input[type="email"], input[name*="user"], input[name*="login"], input[id*="user"]');
                         var passInputs = document.querySelectorAll('input[type="password"]');
                         if (userInputs.length > 0) {
-                            userInputs[0].value = '$safeUser';
+                            userInputs[0].value = $quotedUser;
                             userInputs[0].dispatchEvent(new Event('input', { bubbles: true }));
                             userInputs[0].dispatchEvent(new Event('change', { bubbles: true }));
                         }
                         if (passInputs.length > 0) {
-                            passInputs[0].value = '$safePass';
+                            passInputs[0].value = $quotedPass;
                             passInputs[0].dispatchEvent(new Event('input', { bubbles: true }));
                             passInputs[0].dispatchEvent(new Event('change', { bubbles: true }));
                         }
@@ -180,6 +180,20 @@ fun BrowserWebView(
     // Set custom clients
     DisposableEffect(webView, isShieldEnabled) {
         webView.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): Boolean {
+                val uri = request?.url ?: return false
+                val scheme = uri.scheme?.lowercase() ?: return false
+
+                // Disallow direct file:// access from untrusted web contexts
+                if (scheme == "file") {
+                    return true
+                }
+                return false
+            }
+
             override fun shouldInterceptRequest(
                 view: WebView?,
                 request: WebResourceRequest?
