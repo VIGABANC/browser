@@ -10,15 +10,11 @@ import androidx.compose.ui.platform.LocalContext
 object AccessibilityUtils {
 
     /**
-     * Check if the user has enabled "Remove Animations" in accessibility settings.
-     * Also checks if animator duration scale is set to 0 (developer option or accessibility).
+     * Check if the user has enabled "Remove Animations" or reduced motion in system settings.
+     * Checks if animator/transition/window duration scales are set to 0.
      */
     fun isReducedMotionEnabled(context: Context): Boolean {
-        // Check accessibility service (TalkBack, etc. often imply reduced motion preference)
-        val accessibilityManager = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
-        val isAccessibilityEnabled = accessibilityManager?.isEnabled == true
-
-        // Check system animator duration scale
+        // Check system animator duration scale (0f indicates animations disabled)
         val animatorDurationScale = try {
             Settings.Global.getFloat(
                 context.contentResolver,
@@ -45,8 +41,7 @@ object AccessibilityUtils {
             )
         } catch (e: Exception) { 1.0f }
 
-        return isAccessibilityEnabled || 
-               animatorDurationScale == 0f || 
+        return animatorDurationScale == 0f || 
                transitionScale == 0f ||
                windowScale == 0f
     }

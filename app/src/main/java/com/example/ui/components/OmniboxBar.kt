@@ -1,5 +1,7 @@
 package com.example.ui.components
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -18,6 +20,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
@@ -35,21 +38,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.model.BrowserTab
 import com.example.ui.theme.AegisBrowserChrome
 import com.example.ui.theme.AegisCyanPrimary
+import com.example.ui.theme.AegisMenuSurface
 import com.example.ui.theme.AegisOmniboxBg
 import com.example.ui.theme.AegisTextPrimary
 import com.example.ui.theme.AegisTextSecondary
+import com.example.ui.utils.VoiceRecognitionManager
 
 @Composable
 fun OmniboxBar(
@@ -71,18 +78,28 @@ fun OmniboxBar(
     val focusManager = LocalFocusManager.current
     var isEditing by remember { mutableStateOf(false) }
     var textInput by remember { mutableStateOf("") }
+    val context = LocalContext.current
+
+    val speechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        VoiceRecognitionManager.handleSpeechResult(result) { spokenText ->
+            textInput = spokenText
+            onQueryChange(spokenText)
+            onNavigate(spokenText)
+        }
+    }
 
     Surface(
         color = AegisBrowserChrome,
-        modifier = modifier
-            .fillMaxWidth()
-            .height(56.dp)
+        modifier = modifier.fillMaxWidth() // removed height(56.dp) constraint to allow dropdown to not clip, actually DropdownMenu floats. Let's keep height(56.dp) on surface and put DropdownMenu inside.
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        androidx.compose.foundation.layout.Box(modifier = Modifier.fillMaxWidth().height(56.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             // 1. Aegis Shield Privacy Control Button (Left)
@@ -161,6 +178,20 @@ fun OmniboxBar(
                                 .clickable { isEditing = true }
                         )
                     }
+                    
+                    IconButton(
+                        onClick = {
+                            speechLauncher.launch(VoiceRecognitionManager.getSpeechIntent())
+                        },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = "Recherche vocale",
+                            tint = AegisTextSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
 
@@ -179,5 +210,33 @@ fun OmniboxBar(
                 )
             }
         }
+
+        androidx.compose.material3.DropdownMenu(
+            expanded = isEditing && suggestions.isNotEmpty(),
+            onDismissRequest = { /* Don't dismiss on outside tap unless focus lost */ },
+            modifier = Modifier
+                .fillMaxWidth(0.9f)
+                .background(AegisMenuSurface)
+        ) {
+            suggestions.take(5).forEach { suggestion ->
+                androidx.compose.material3.DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = suggestion,
+                            color = AegisTextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    onClick = {
+                        textInput = suggestion
+                        isEditing = false
+                        focusManager.clearFocus()
+                        onNavigate(suggestion)
+                    }
+                )
+            }
+        }
     }
+}
 }

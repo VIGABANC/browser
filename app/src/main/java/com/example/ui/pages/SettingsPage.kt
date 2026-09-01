@@ -80,6 +80,9 @@ fun SettingsPage(
     isDarkTheme: Boolean,
     isSafeMode: Boolean,
     isIncognito: Boolean,
+    isClearOnClose: Boolean = false,
+    onToggleClearOnClose: (Boolean) -> Unit = {},
+    onClearCacheAndCookies: () -> Unit = {},
     onSelectSearchEngine: (SearchEngine) -> Unit,
     onSelectUserAgentMode: (UserAgentMode) -> Unit,
     onToggleDarkTheme: () -> Unit,
@@ -92,6 +95,7 @@ fun SettingsPage(
     modifier: Modifier = Modifier
 ) {
     var isClearDataDialogOpen by remember { mutableStateOf(false) }
+    var isClearCacheDialogOpen by remember { mutableStateOf(false) }
     var isSearchEngineDialogOpen by remember { mutableStateOf(false) }
     var isUserAgentDialogOpen by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
@@ -249,6 +253,39 @@ fun SettingsPage(
 
             Spacer(modifier = Modifier.height(20.dp))
 
+            // Privacy & Browsing Data
+            SettingsSectionHeader(title = "Confidentialité & Données de navigation", color = AegisCyanPrimary)
+
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(16.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(vertical = 6.dp)) {
+                    SettingsToggleItem(
+                        icon = Icons.Default.Shield,
+                        iconTint = AegisCyanPrimary,
+                        title = "Effacer à la fermeture",
+                        subtitle = "Nettoie le cache et les cookies dès que l'application se ferme",
+                        checked = isClearOnClose,
+                        onCheckedChange = onToggleClearOnClose
+                    )
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
+
+                    SettingsNavigationItem(
+                        icon = Icons.Default.DeleteSweep,
+                        iconTint = AegisAmberSecondary,
+                        title = "Vider le cache et les cookies",
+                        subtitle = "Supprime les sessions WebKit, LocalStorage et fichiers temporaires",
+                        onClick = { isClearCacheDialogOpen = true }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
             // Data Wipe & Danger Zone
             SettingsSectionHeader(title = "Données & Stockage Local", color = MaterialTheme.colorScheme.error)
 
@@ -304,6 +341,37 @@ fun SettingsPage(
 
             Spacer(modifier = Modifier.height(40.dp))
         }
+    }
+
+    // Clear Cache and Cookies Confirmation Dialog
+    if (isClearCacheDialogOpen) {
+        AlertDialog(
+            onDismissRequest = { isClearCacheDialogOpen = false },
+            title = { Text("Vider le cache et les cookies ?", color = MaterialTheme.colorScheme.onSurface) },
+            text = {
+                Text(
+                    "Cette action supprime tous les cookies WebKit, les sessions et les fichiers en cache. Votre historique et vos favoris enregistrés seront conservés.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onClearCacheAndCookies()
+                        isClearCacheDialogOpen = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AegisAmberSecondary)
+                ) {
+                    Text("Vider maintenant", color = Color.Black, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { isClearCacheDialogOpen = false }) {
+                    Text("Annuler", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        )
     }
 
     // Clear Data Confirmation Dialog

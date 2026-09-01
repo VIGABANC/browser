@@ -170,10 +170,70 @@ fun ShieldDashboardModal(
             Spacer(modifier = Modifier.height(20.dp))
 
             Text(
+                text = "Shield Mode",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (stats.shieldMode == "Standard") AegisCyanPrimary else Color.Transparent),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "Standard",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (stats.shieldMode == "Standard") Color.White else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (stats.shieldMode == "Strict") AegisCyanPrimary else Color.Transparent),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "Strict",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (stats.shieldMode == "Strict") Color.White else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Text(
                 text = "Privacy & Script Controls",
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            NetworkTrafficChart(
+                trafficData = listOf(10f, 30f, 25f, 50f, 40f, 80f, 60f, 90f, 100f, 75f),
+                lineColor = AegisCyanPrimary,
+                modifier = Modifier.padding(vertical = 10.dp)
             )
 
             Spacer(modifier = Modifier.height(10.dp))

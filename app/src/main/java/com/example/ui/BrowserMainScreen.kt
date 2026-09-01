@@ -112,8 +112,11 @@ fun BrowserMainScreen(
     val featureChips by viewModel.featureChips.collectAsStateWithLifecycle()
     val activeFeatureId by viewModel.activeFeatureId.collectAsStateWithLifecycle()
 
-    // Overflow Menu Open state (default true for AEGIS-UI-001 Reference Screen)
-    var isOverflowMenuOpen by remember { mutableStateOf(true) }
+    // Overflow Menu Open state (default false)
+    var isOverflowMenuOpen by remember { mutableStateOf(false) }
+
+    var activeWebView by remember { mutableStateOf<android.webkit.WebView?>(null) }
+    val coroutineScope = rememberCoroutineScope()
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -384,6 +387,37 @@ fun BrowserMainScreen(
             onOpenHelp = {
                 scope.launch {
                     snackbarHostState.showSnackbar("Aegis Browser — Navigation privée et sécurisée")
+                }
+            },
+            onScreenshot = {
+                coroutineScope.launch {
+                    com.example.ui.utils.ScreenshotManager.captureAndShare(context, activeWebView)
+                }
+            },
+            onToggleReaderMode = {
+                val readerScript = """
+                    (function() {
+                        const article = document.querySelector('article') || document.body;
+                        document.body.innerHTML = '';
+                        document.body.appendChild(article);
+                        document.querySelectorAll('header, footer, nav, aside, iframe, .ad, [id*="ad"], [class*="ad"]').forEach(el => el.remove());
+                        document.body.style.padding = '5%';
+                        document.body.style.fontFamily = 'sans-serif';
+                        document.body.style.fontSize = '1.2rem';
+                        document.body.style.lineHeight = '1.6';
+                        document.body.style.color = '#222';
+                        document.body.style.backgroundColor = '#FAFAFA';
+                    })();
+                """.trimIndent()
+                activeWebView?.evaluateJavascript(readerScript, null)
+            },
+            onSummarizePage = {
+                viewModel.summarizeCurrentPage()
+            },
+            onClearCacheAndCookies = {
+                viewModel.clearBrowserCacheAndCookies(context, false)
+                scope.launch {
+                    snackbarHostState.showSnackbar("Cache et cookies supprimés avec succès")
                 }
             }
         )

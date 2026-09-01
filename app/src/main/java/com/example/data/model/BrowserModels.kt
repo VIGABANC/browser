@@ -147,6 +147,14 @@ data class HistoryItem(
     val isSecure: Boolean = true
 )
 
+data class BlockedElementTimePoint(
+    val minuteLabel: String,
+    val timestamp: Long,
+    val adsBlocked: Int,
+    val trackersBlocked: Int,
+    val totalBlocked: Int = adsBlocked + trackersBlocked
+)
+
 data class ShieldStats(
     val adsBlockedTotal: Int = 142,
     val trackersBlockedTotal: Int = 89,
@@ -156,7 +164,9 @@ data class ShieldStats(
     val isShieldEnabled: Boolean = true,
     val blockFingerprinting: Boolean = true,
     val blockThirdPartyCookies: Boolean = true,
-    val blockScripts: Boolean = false
+    val blockScripts: Boolean = false,
+    val shieldMode: String = "Standard",
+    val sessionTrendPoints: List<BlockedElementTimePoint> = emptyList()
 )
 
 data class SafeModeState(

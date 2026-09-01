@@ -31,9 +31,11 @@ import com.example.data.model.UserAgentMode
 import com.example.data.reader.ReaderModeExtractor
 import com.example.data.repository.BrowserRepository
 import com.example.data.suggest.SearchSuggestClient
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -254,9 +256,20 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     val searchSuggestions: StateFlow<List<String>> = _searchSuggestions.asStateFlow()
     private var suggestJob: Job? = null
 
-    // Shields State
-    private val _shieldStats = MutableStateFlow(ShieldStats())
+    // Shields State with Recharts-Style Session Trend Data
+    private val _shieldStats = MutableStateFlow(
+        ShieldStats(
+            sessionTrendPoints = com.example.ui.components.generateDefaultSessionTrend()
+        )
+    )
     val shieldStats: StateFlow<ShieldStats> = _shieldStats.asStateFlow()
+
+    // Gemini Webpage Summary Bottom Sheet State
+    private val _isSummaryBottomSheetOpen = MutableStateFlow(false)
+    val isSummaryBottomSheetOpen: StateFlow<Boolean> = _isSummaryBottomSheetOpen.asStateFlow()
+
+    private val _latestSummaryMessage = MutableStateFlow<AegisAiMessage?>(null)
+    val latestSummaryMessage: StateFlow<AegisAiMessage?> = _latestSummaryMessage.asStateFlow()
 
     // Safe Mode State
     private val _safeModeState = MutableStateFlow(SafeModeState())
@@ -364,9 +377,24 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         updateActiveTab { it.copy(userAgentMode = mode) }
     }
 
-    fun toggleIncognitoSession(enabled: Boolean) {
+    fun toggleIncognitoSession(enabled: Boolean, context: android.content.Context? = null) {
+        val wasIncognito = _isIncognitoSession.value
         _isIncognitoSession.value = enabled
         updateActiveTab { it.copy(isIncognito = enabled) }
+
+        if (!enabled && wasIncognito && context != null) {
+            // Automatically wipe cookies, webstorage, and session cache when exiting incognito mode
+            clearBrowserCacheAndCookies(context, alsoClearHistory = false)
+            _tabs.update { tabs ->
+                val remaining = tabs.filter { !it.isIncognito }
+                if (remaining.isEmpty()) {
+                    listOf(BrowserTab(id = UUID.randomUUID().toString(), title = "Aegis Home", url = "about:home", isIncognito = false))
+                } else {
+                    remaining
+                }
+            }
+            _activeTabId.value = _tabs.value.first().id
+        }
     }
 
     // -------------------------------------------------------------
@@ -477,12 +505,20 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun onTitleReceived(title: String) {
+        if (title.isNotBlank() && title != "about:blank") {
+            updateActiveTab { current ->
+                if (current.title != title) current.copy(title = title) else current
+            }
+        }
+    }
+
     fun onPageFinished(url: String, title: String?) {
         val cleanTitle = if (!title.isNullOrBlank()) title else url
         updateActiveTab {
             it.copy(
                 url = url,
-                title = cleanTitle,
+                title = if (cleanTitle.isNotBlank()) cleanTitle else it.title,
                 isLoading = false,
                 progress = 1f,
                 sslSecure = url.startsWith("https://")
@@ -496,8 +532,12 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     fun onProgressChanged(progress: Int) {
         val p = progress / 100f
-        updateActiveTab {
-            it.copy(progress = p, isLoading = p < 1f)
+        updateActiveTab { current ->
+            if (Math.abs(current.progress - p) >= 0.05f || (p >= 1f && current.isLoading)) {
+                current.copy(progress = p, isLoading = p < 1f)
+            } else {
+                current
+            }
         }
     }
 
@@ -851,11 +891,105 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    private val _isClearOnCloseEnabled = MutableStateFlow(false)
+    val isClearOnCloseEnabled: StateFlow<Boolean> = _isClearOnCloseEnabled.asStateFlow()
+
+    fun toggleClearOnClose(enabled: Boolean) {
+        _isClearOnCloseEnabled.value = enabled
+    }
+
+    fun clearBrowserCacheAndCookies(context: android.content.Context, alsoClearHistory: Boolean = false) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // 1. Clear WebKit Cookies
+                val cookieManager = android.webkit.CookieManager.getInstance()
+                cookieManager.removeAllCookies(null)
+                cookieManager.removeSessionCookies(null)
+                cookieManager.flush()
+
+                // 2. Clear Web Storage (LocalStorage, IndexedDB, WebSQL)
+                android.webkit.WebStorage.getInstance().deleteAllData()
+
+                // 3. Clear WebView Cache files
+                val cacheDir = context.cacheDir
+                val webviewCache = java.io.File(cacheDir, "webview_cache")
+                if (webviewCache.exists()) {
+                    webviewCache.deleteRecursively()
+                }
+                val appWebviewDir = java.io.File(context.dataDir, "app_webview")
+                if (appWebviewDir.exists()) {
+                    java.io.File(appWebviewDir, "Default/Cache").deleteRecursively()
+                    java.io.File(appWebviewDir, "Default/Cookies").delete()
+                    java.io.File(appWebviewDir, "Default/Web Data").delete()
+                }
+
+                // 4. Clear blocked telemetry events from memory
+                AdBlockManager.clearSessionBlockedEvents()
+
+                // 5. Clear repository data if requested
+                if (alsoClearHistory) {
+                    repository.clearHistory()
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("BrowserViewModel", "Error clearing cache and cookies", e)
+            }
+        }
+    }
+
+    fun summarizeCurrentPage() {
+        val currentTab = activeTab.value
+        summarizeActiveUrl(currentTab.url, currentTab.title)
+    }
+
+    fun summarizeActiveUrl(url: String = activeTab.value.url, title: String = activeTab.value.title) {
+        val pageTitle = title.ifBlank { "Current Webpage" }
+        _isSummaryBottomSheetOpen.value = true
+        _isAiThinking.value = true
+
+        val prompt = "Provide a comprehensive, structured executive summary of this webpage: '$pageTitle' ($url). Highlight key insights, core arguments, facts, and actionable conclusions."
+
+        val currentTab = activeTab.value
+        val pageContent = if (_latestPageText.value.isNotBlank()) {
+            "Viewport Title: $pageTitle\nDomain: $url\nShield Status: ${if (shieldStats.value.isShieldEnabled) "Protected" else "Standard"}\n\nWebpage Text Content:\n${_latestPageText.value.take(3500)}"
+        } else {
+            "Viewport Title: $pageTitle\nDomain: $url\nShield Status: ${if (shieldStats.value.isShieldEnabled) "Protected" else "Standard"}"
+        }
+
+        viewModelScope.launch {
+            val response = GeminiClient.executeDeepReasoning(
+                prompt = prompt,
+                taskType = AiTaskType.PAGE_SUMMARY,
+                pageUrl = url,
+                pageTitle = pageTitle,
+                pageContentSnippet = pageContent,
+                detectedMediaContext = null
+            )
+            _latestSummaryMessage.value = response
+            _aiMessages.update { it + response }
+            _isAiThinking.value = false
+        }
+    }
+
+    fun dismissSummaryBottomSheet() {
+        _isSummaryBottomSheetOpen.value = false
+    }
+
+    fun syncFilterLists(context: android.content.Context) {
+        viewModelScope.launch {
+            com.example.data.adblock.FilterListManager.updateAllFilters(context)
+        }
+    }
+
+    fun toggleFilterSubscription(context: android.content.Context, subscriptionId: String, enabled: Boolean) {
+        com.example.data.adblock.FilterListManager.toggleSubscription(context, subscriptionId, enabled)
+    }
+
     fun clearAllData() {
         viewModelScope.launch {
             repository.clearHistory()
             repository.clearBookmarks()
         }
+        clearBrowserCacheAndCookies(getApplication(), true)
     }
 
     // -------------------------------------------------------------
@@ -888,14 +1022,32 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     // -------------------------------------------------------------
     fun onOmniboxQueryChange(query: String) {
         suggestJob?.cancel()
-        if (query.trim().length < 2 || query.startsWith("http://") || query.startsWith("https://")) {
+        if (query.trim().length < 2) {
             _searchSuggestions.value = emptyList()
             return
         }
         suggestJob = viewModelScope.launch {
             delay(150) // Debounce typing
-            val predictions = SearchSuggestClient.fetchGoogleSuggestions(query)
-            _searchSuggestions.value = predictions
+            
+            // Local history & pattern matching for autocomplete
+            val localHistory = history.value
+            val historyMatches = localHistory
+                .map { it.url.replace("https://", "").replace("http://", "").removeSuffix("/") }
+                .filter { it.contains(query, ignoreCase = true) }
+                .distinct()
+                .map { "https://$it" }
+                .take(3)
+                
+            val webPatterns = if (!query.contains(" ") && !query.contains(".")) {
+                listOf("https://www.${query.trim()}.com", "https://${query.trim()}.org")
+            } else emptyList()
+            
+            // Remote fallback
+            val predictions = if (!query.startsWith("http://") && !query.startsWith("https://")) {
+                SearchSuggestClient.fetchGoogleSuggestions(query).take(4)
+            } else emptyList()
+
+            _searchSuggestions.value = (historyMatches + webPatterns + predictions).distinct()
         }
     }
 

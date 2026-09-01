@@ -25,10 +25,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Screenshot
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.HorizontalDivider
@@ -79,6 +81,10 @@ fun BrowserOverflowMenuSheet(
     onOpenPrivacySettings: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenHelp: () -> Unit,
+    onScreenshot: () -> Unit = {},
+    onToggleReaderMode: () -> Unit = {},
+    onSummarizePage: () -> Unit = {},
+    onClearCacheAndCookies: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var safeModeState by remember { mutableStateOf(isSafeModeEnabled) }
@@ -129,7 +135,35 @@ fun BrowserOverflowMenuSheet(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // SECTION 1: TAB & CORE ACTIONS
+                // SECTION 1: AI & READING ENHANCEMENTS
+                AegisMenuRow(
+                    title = "Résumer avec Gemini AI",
+                    imageVector = Icons.Default.Shield,
+                    onClick = {
+                        onDismiss()
+                        onSummarizePage()
+                    },
+                    testTag = "menu_summarize_gemini"
+                )
+
+                AegisMenuRow(
+                    title = "Mode Lecture",
+                    imageVector = Icons.AutoMirrored.Filled.MenuBook,
+                    onClick = {
+                        onDismiss()
+                        onToggleReaderMode()
+                    },
+                    testTag = "menu_reader_mode"
+                )
+
+                // SECTION DIVIDER
+                HorizontalDivider(
+                    color = AegisSeparator,
+                    thickness = 1.dp,
+                    modifier = Modifier.padding(vertical = 6.dp)
+                )
+
+                // SECTION 2: TAB & CORE ACTIONS
                 AegisMenuRow(
                     title = "Nouvel onglet",
                     drawableRes = R.drawable.ic_shield_check,
@@ -188,6 +222,16 @@ fun BrowserOverflowMenuSheet(
                     testTag = "menu_downloads"
                 )
 
+                AegisMenuRow(
+                    title = "Capture d'écran",
+                    imageVector = Icons.Default.Screenshot,
+                    onClick = {
+                        onDismiss()
+                        onScreenshot()
+                    },
+                    testTag = "menu_screenshot"
+                )
+
                 // SECTION DIVIDER
                 HorizontalDivider(
                     color = AegisSeparator,
@@ -195,7 +239,7 @@ fun BrowserOverflowMenuSheet(
                     modifier = Modifier.padding(vertical = 6.dp)
                 )
 
-                // SECTION 2: MEDIA DOWNLOADER & SAFE MODE
+                // SECTION 3: MEDIA DOWNLOADER & SAFE MODE
                 AegisMenuRow(
                     title = "Télécharger média détecté",
                     drawableRes = R.drawable.ic_media_detect,
@@ -249,25 +293,25 @@ fun BrowserOverflowMenuSheet(
                     modifier = Modifier.padding(vertical = 6.dp)
                 )
 
-                // SECTION 3: PRIVACY, PERMISSIONS & SETTINGS
+                // SECTION 4: PRIVACY, PERMISSIONS & SETTINGS
                 AegisMenuRow(
-                    title = "Autorisations du site",
-                    drawableRes = R.drawable.ic_shield_permissions,
-                    onClick = {
-                        onDismiss()
-                        onOpenSitePermissions()
-                    },
-                    testTag = "menu_site_permissions"
-                )
-
-                AegisMenuRow(
-                    title = "Protection et confidentialité",
+                    title = "Statistiques & Boucliers",
                     drawableRes = R.drawable.ic_shield_check,
                     onClick = {
                         onDismiss()
                         onOpenPrivacySettings()
                     },
                     testTag = "menu_privacy_protection"
+                )
+
+                AegisMenuRow(
+                    title = "Vider cache et cookies",
+                    imageVector = Icons.Default.Shield,
+                    onClick = {
+                        onDismiss()
+                        onClearCacheAndCookies()
+                    },
+                    testTag = "menu_clear_cache_cookies"
                 )
 
                 AegisMenuRow(

@@ -17,9 +17,14 @@ import java.util.concurrent.TimeUnit
 
 object GeminiClient {
     private const val TAG = "AegisGeminiClient"
-    // Using required gemini-3.1-pro-preview model
-    private const val MODEL_NAME = "gemini-3.1-pro-preview"
     private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/"
+
+    private fun getModelForTask(taskType: AiTaskType): String {
+        return when (taskType) {
+            AiTaskType.PAGE_SUMMARY -> "gemini-3.5-flash"
+            else -> "gemini-3.1-pro-preview"
+        }
+    }
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
@@ -36,6 +41,7 @@ object GeminiClient {
         detectedMediaContext: String? = null
     ): AegisAiMessage = withContext(Dispatchers.IO) {
         val apiKey = BuildConfig.GEMINI_API_KEY
+        val modelName = getModelForTask(taskType)
 
         if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") {
             // Provide an informative, high-value local fallback analysis when API key is unconfigured
@@ -68,18 +74,21 @@ object GeminiClient {
                     })
                 })
 
-                // Generation Config with HIGH thinking level
-                put("generationConfig", JSONObject().apply {
-                    put("thinkingConfig", JSONObject().apply {
+                // Generation Config
+                val config = JSONObject().apply {
+                    put("temperature", if (taskType == AiTaskType.PAGE_SUMMARY) 0.2 else 0.4)
+                }
+                if (modelName == "gemini-3.1-pro-preview") {
+                    config.put("thinkingConfig", JSONObject().apply {
                         put("thinkingLevel", "high")
                     })
-                    put("temperature", 0.4)
-                })
+                }
+                put("generationConfig", config)
             }
 
             val requestBody = requestJson.toString().toRequestBody("application/json".toMediaType())
             val request = Request.Builder()
-                .url("$BASE_URL$MODEL_NAME:generateContent?key=$apiKey")
+                .url("$BASE_URL$modelName:generateContent?key=$apiKey")
                 .post(requestBody)
                 .build()
 

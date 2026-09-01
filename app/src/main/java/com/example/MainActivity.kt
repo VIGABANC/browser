@@ -59,4 +59,11 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onDestroy() {
+        if (browserViewModel.isClearOnCloseEnabled.value) {
+            browserViewModel.clearBrowserCacheAndCookies(applicationContext, false)
+        }
+        super.onDestroy()
+    }
 }

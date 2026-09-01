@@ -1,6 +1,6 @@
 {
-  "name": "Remix Aegis Browser",
-  "description": "Privacy-focused Android browser with built-in media sniffer, downloader, ad-blocking shields, and Gemini 3.1 Pro High-Thinking assistant.",
+  "name": "Aegis Browser",
+  "description": "Privacy-focused Android browser with real-time shields, Gemini AI web summarization, media sniffer, and ad-blocking filter lists.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

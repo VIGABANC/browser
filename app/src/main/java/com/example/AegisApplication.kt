@@ -36,9 +36,11 @@ class AegisApplication : Application() {
         // 1. Initialize cache and storage dirs synchronously
         initializeCacheDirs()
 
-        // 2. Pre-load adblock rules on IO thread
+        // 2. Pre-load adblock rules and filter lists on IO thread
         applicationScope.launch {
             AdBlockManager.warmup()
+            AdBlockManager.loadDynamicRules(this@AegisApplication)
+            com.example.data.adblock.FilterListSyncWorker.schedulePeriodicSync(this@AegisApplication)
         }
 
         // 3. Initialize Room database on IO thread

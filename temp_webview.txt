@@ -1,0 +1,101 @@
+91:    val webView = remember(tab.id) {
+92-        try {
+93-            val cachePath = File(context.cacheDir, "webview_cache")
+94-            if (!cachePath.exists()) cachePath.mkdirs()
+95-        } catch (_: Exception) {}
+96-
+97-        WebView(context).apply {
+98-            layoutParams = ViewGroup.LayoutParams(
+99-                ViewGroup.LayoutParams.MATCH_PARENT,
+100-                ViewGroup.LayoutParams.MATCH_PARENT
+101-            )
+102-            onWebViewCreated(this)
+103-
+104-            setLayerType(View.LAYER_TYPE_HARDWARE, null)
+105-
+106-            settings.apply {
+107-                javaScriptEnabled = true
+108-                domStorageEnabled = true
+109-                loadWithOverviewMode = true
+110-                useWideViewPort = true
+111-                setSupportZoom(true)
+112-                builtInZoomControls = true
+113-                displayZoomControls = false
+114-                mediaPlaybackRequiresUserGesture = false
+115-                mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+116-                cacheMode = if (tab.isIncognito) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
+117-            }
+118-
+119-            setFindListener { activeMatchOrdinal, numberOfMatches, _ ->
+120-                onFindMatchCounted(activeMatchOrdinal, numberOfMatches)
+121-            }
+122-
+123-            addJavascriptInterface(
+124-                AegisJsBridge(
+125-                    onMediaDetectedCallback = onMediaDetected,
+126-                    onReaderContentCallback = onReaderContentExtracted,
+127-                    onLoginFormDetectedCallback = onLoginFormDetected
+128-                ),
+129-                "AegisBridge"
+130-            )
+131-        }
+132-    }
+133-
+134-    // Handle Find In Page actions
+135-    LaunchedEffect(findQuery) {
+136-        if (findQuery.isNotBlank()) {
+137-            webView.findAllAsync(findQuery)
+138-        } else {
+139-            webView.clearMatches()
+140-            onFindMatchCounted(0, 0)
+141-        }
+142-    }
+143-
+144-    LaunchedEffect(findActionTrigger) {
+145-        if (findActionTrigger > 0 && findQuery.isNotBlank()) {
+146-            webView.findNext(findForward)
+147-        }
+148-    }
+149-
+150-    LaunchedEffect(goBackTrigger) {
+151-        if (goBackTrigger > 0 && webView.canGoBack()) {
+152-            webView.goBack()
+153-        }
+154-    }
+155-
+156-    // Handle AutoFill Injection
+157-    LaunchedEffect(autoFillCredential) {
+158-        autoFillCredential?.let { (username, password) ->
+159-            val quotedUser = org.json.JSONObject.quote(username)
+160-            val quotedPass = org.json.JSONObject.quote(password)
+161-            val script = """
+162-                (function() {
+163-                    try {
+164-                        var userInputs = document.querySelectorAll('input[type="text"], input[type="email"], input[name*="user"], input[name*="login"], input[id*="user"]');
+165-                        var passInputs = document.querySelectorAll('input[type="password"]');
+166-                        if (userInputs.length > 0) {
+167-                            userInputs[0].value = $quotedUser;
+168-                            userInputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+169-                            userInputs[0].dispatchEvent(new Event('change', { bubbles: true }));
+170-                        }
+171-                        if (passInputs.length > 0) {
+172-                            passInputs[0].value = $quotedPass;
+173-                            passInputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+174-                            passInputs[0].dispatchEvent(new Event('change', { bubbles: true }));
+175-                        }
+176-                    } catch(e) {}
+177-                })();
+178-            """.trimIndent()
+179-            webView.evaluateJavascript(script, null)
+180-        }
+181-    }
+182-
+183-    // Set custom clients
+184-    DisposableEffect(webView, isShieldEnabled) {
+185-        webView.webViewClient = object : WebViewClient() {
+186-            override fun shouldOverrideUrlLoading(
+187-                view: WebView?,
+188-                request: WebResourceRequest?
+189-            ): Boolean {
+190-                val uri = request?.url ?: return false
+191-                val scheme = uri.scheme?.lowercase() ?: return false

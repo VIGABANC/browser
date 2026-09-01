@@ -62,6 +62,7 @@ fun BrowserWebView(
     autoFillCredential: Pair<String, String>? = null,
     onPageStarted: (String) -> Unit,
     onPageFinished: (String, String?) -> Unit,
+    onTitleReceived: (String) -> Unit = {},
     onProgressChanged: (Int) -> Unit,
     onNavigationStateChanged: (canGoBack: Boolean, canGoForward: Boolean) -> Unit = { _, _ -> },
     onMediaDetected: (String) -> Unit,
@@ -76,6 +77,7 @@ fun BrowserWebView(
     onOpenHistory: () -> Unit = {},
     onShowMediaGrabber: () -> Unit = {},
     onOpenInNewTab: (String) -> Unit = {},
+    onWebViewCreated: (WebView) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -86,6 +88,12 @@ fun BrowserWebView(
             ""
         }
     }
+    val swipeRefreshLayout = remember(tab.id) {
+        androidx.swiperefreshlayout.widget.SwipeRefreshLayout(context).apply {
+            setColorSchemeResources(android.R.color.holo_blue_bright)
+        }
+    }
+
     val webView = remember(tab.id) {
         try {
             val cachePath = File(context.cacheDir, "webview_cache")
@@ -97,6 +105,7 @@ fun BrowserWebView(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
+            onWebViewCreated(this)
 
             setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
@@ -125,6 +134,30 @@ fun BrowserWebView(
                 ),
                 "AegisBridge"
             )
+
+            // Setup Gesture Detector for Swipe Left/Right History Navigation
+            val gestureDetector = android.view.GestureDetector(context, object : android.view.GestureDetector.SimpleOnGestureListener() {
+                override fun onFling(e1: android.view.MotionEvent?, e2: android.view.MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+                    if (e1 != null && Math.abs(e1.x - e2.x) > Math.abs(e1.y - e2.y)) {
+                        if (e1.x - e2.x > 150 && Math.abs(velocityX) > 200) { // Swipe Left (Forward)
+                            if (canGoForward()) goForward()
+                            return true
+                        } else if (e2.x - e1.x > 150 && Math.abs(velocityX) > 200) { // Swipe Right (Back)
+                            if (canGoBack()) goBack()
+                            return true
+                        }
+                    }
+                    return false
+                }
+            })
+            setOnTouchListener { _, event -> gestureDetector.onTouchEvent(event); false }
+        }
+    }
+
+    // Set refresh listener
+    LaunchedEffect(webView) {
+        swipeRefreshLayout.setOnRefreshListener {
+            webView.reload()
         }
     }
 
@@ -309,7 +342,9 @@ fun BrowserWebView(
 
             override fun onReceivedTitle(view: WebView?, title: String?) {
                 super.onReceivedTitle(view, title)
-                onPageFinished(view?.url.orEmpty(), title)
+                if (!title.isNullOrBlank()) {
+                    onTitleReceived(title)
+                }
             }
         }
 
@@ -332,9 +367,12 @@ fun BrowserWebView(
             tab.isDesktopMode -> "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
             else -> null
         }
-        webView.settings.userAgentString = effectiveUserAgent
-        if (tab.url.isNotBlank() && tab.url != "about:blank" && tab.url != "about:home") {
-            webView.reload()
+        if (webView.settings.userAgentString != effectiveUserAgent) {
+            webView.settings.userAgentString = effectiveUserAgent
+            val currentWebUrl = webView.url
+            if (!currentWebUrl.isNullOrBlank() && currentWebUrl != "about:blank" && tab.url.isNotBlank() && tab.url != "about:home") {
+                webView.reload()
+            }
         }
     }
 
@@ -354,16 +392,33 @@ fun BrowserWebView(
 
     // Navigate when tab URL changes
     LaunchedEffect(tab.url) {
-        if (tab.url != "about:home" && tab.url != "about:blank") {
-            if (webView.url != tab.url) {
+        if (tab.url.isNotBlank() && tab.url != "about:home" && tab.url != "about:blank") {
+            val currentWebUrl = webView.url
+            val isAlreadyLoaded = currentWebUrl != null && (
+                currentWebUrl == tab.url ||
+                currentWebUrl.trimEnd('/') == tab.url.trimEnd('/')
+            )
+            if (!isAlreadyLoaded) {
                 webView.loadUrl(tab.url)
             }
         }
     }
 
+    // Link SwipeRefreshLayout state
+    LaunchedEffect(tab.isLoading) {
+        swipeRefreshLayout.isRefreshing = tab.isLoading
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         AndroidView(
-            factory = { webView },
+            factory = {
+                swipeRefreshLayout.apply {
+                    if (webView.parent != null) {
+                        (webView.parent as? ViewGroup)?.removeView(webView)
+                    }
+                    addView(webView)
+                }
+            },
             modifier = Modifier.fillMaxSize()
         )
     }

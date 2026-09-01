@@ -24,6 +24,7 @@ import com.example.ui.components.BrowserHomeDashboard
 import com.example.ui.components.BrowserWebView
 import com.example.ui.components.MediaGrabberBottomSheet
 import com.example.ui.components.WebpageAiFloatingActionButton
+import com.example.ui.components.WebpageSummaryBottomSheet
 import com.example.ui.navigation.AegisRoutes
 import com.example.ui.navigation.Screen
 import com.example.ui.pages.AiAssistantPage
@@ -43,7 +44,8 @@ fun BrowserNavigation(
     viewModel: BrowserViewModel,
     modifier: Modifier = Modifier,
     snackbarHostState: SnackbarHostState? = null,
-    onNavigateToWeb: (String) -> Unit = {}
+    onNavigateToWeb: (String) -> Unit = {},
+    onWebViewCreated: (android.webkit.WebView) -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
 
@@ -74,13 +76,15 @@ fun BrowserNavigation(
     val isAiThinking by viewModel.isAiThinking.collectAsState()
     val selectedAiTask by viewModel.selectedAiTask.collectAsState()
     val webGoBackTrigger by viewModel.webGoBackTrigger.collectAsState()
+    val isClearOnClose by viewModel.isClearOnCloseEnabled.collectAsState()
+    val filterSubscriptions by com.example.data.adblock.FilterListManager.subscriptions.collectAsState()
+    val isSummaryBottomSheetOpen by viewModel.isSummaryBottomSheetOpen.collectAsState()
+    val latestSummaryMessage by viewModel.latestSummaryMessage.collectAsState()
+    val isSyncingFilters by com.example.data.adblock.FilterListManager.isSyncing.collectAsState()
+    val recentBlockedEvents by com.example.data.adblock.AdBlockManager.recentBlockedEvents.collectAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     fun navigateToWebInternal(url: String) {
-        viewModel.loadUrlOrQuery(url)
-        navController.navigate(Screen.Web.createRoute(url)) {
-            popUpTo(Screen.NewTab.route) { inclusive = false }
-            launchSingleTop = true
-        }
         onNavigateToWeb(url)
     }
 
@@ -104,7 +108,7 @@ fun BrowserNavigation(
                 isPrivacyStatsVisible = isPrivacyStatsVisible,
                 isDiscoverFeedVisible = isDiscoverFeedVisible,
                 onNavigate = { navigateToWebInternal(it) },
-                onToggleIncognito = { viewModel.toggleIncognitoSession(!activeTab.isIncognito) },
+                onToggleIncognito = { viewModel.toggleIncognitoSession(!activeTab.isIncognito, context) },
                 onToggleScenicWallpaper = { viewModel.toggleScenicWallpaper() },
                 onTogglePrivacyStatsVisible = { viewModel.togglePrivacyStatsVisible() },
                 onToggleDiscoverFeedVisible = { viewModel.toggleDiscoverFeedVisible() },
@@ -142,8 +146,12 @@ fun BrowserNavigation(
             val rawUrlArg = backStackEntry.arguments?.getString("url")
             val decodedUrl = Screen.Web.parseUrl(rawUrlArg)
 
-            if (activeTab.url != decodedUrl && decodedUrl.isNotBlank() && decodedUrl != "about:home") {
-                viewModel.loadUrlOrQuery(decodedUrl)
+            androidx.compose.runtime.LaunchedEffect(decodedUrl) {
+                if (decodedUrl.isNotBlank() && decodedUrl != "about:home") {
+                    if (activeTab.url == "about:home" || activeTab.url.isBlank()) {
+                        viewModel.loadUrlOrQuery(decodedUrl)
+                    }
+                }
             }
 
             Box(modifier = Modifier.fillMaxSize()) {
@@ -157,6 +165,7 @@ fun BrowserNavigation(
                     autoFillCredential = autoFillPayload,
                     onPageStarted = { viewModel.onPageStarted(it) },
                     onPageFinished = { url, title -> viewModel.onPageFinished(url, title) },
+                    onTitleReceived = { viewModel.onTitleReceived(it) },
                     onProgressChanged = { viewModel.onProgressChanged(it) },
                     onNavigationStateChanged = { back, fwd -> viewModel.updateNavigationState(back, fwd) },
                     onMediaDetected = { viewModel.onMediaDetectedFromJs(it) },
@@ -176,15 +185,20 @@ fun BrowserNavigation(
                     onOpenInNewTab = { newUrl ->
                         viewModel.addNewTab(newUrl)
                         navigateToWebInternal(newUrl)
-                    }
+                    },
+                    onWebViewCreated = onWebViewCreated
                 )
 
                 WebpageAiFloatingActionButton(
                     pageTitle = activeTab.title,
                     hasDetectedMedia = activeTab.detectedMediaList.isNotEmpty(),
                     onTriggerAiTask = { taskType, prompt ->
-                        viewModel.openAiAssistant(taskType, prompt)
-                        navController.navigate(AegisRoutes.AI_ASSISTANT) { launchSingleTop = true }
+                        if (taskType == AiTaskType.PAGE_SUMMARY) {
+                            viewModel.summarizeActiveUrl(activeTab.url, activeTab.title)
+                        } else {
+                            viewModel.openAiAssistant(taskType, prompt)
+                            navController.navigate(AegisRoutes.AI_ASSISTANT) { launchSingleTop = true }
+                        }
                     },
                     onOpenMediaGrabber = {
                         viewModel.openMediaGrabber()
@@ -207,6 +221,9 @@ fun BrowserNavigation(
                 isDarkTheme = isDarkTheme,
                 isSafeMode = safeModeState.isSafeModeActive,
                 isIncognito = isIncognitoSession,
+                isClearOnClose = isClearOnClose,
+                onToggleClearOnClose = { viewModel.toggleClearOnClose(it) },
+                onClearCacheAndCookies = { viewModel.clearBrowserCacheAndCookies(context, false) },
                 onSelectSearchEngine = { viewModel.setSearchEngine(it) },
                 onSelectUserAgentMode = { viewModel.setUserAgentMode(it) },
                 onToggleDarkTheme = { viewModel.toggleDarkTheme() },
@@ -367,6 +384,14 @@ fun BrowserNavigation(
         ) {
             ShieldDashboardPage(
                 stats = shieldStats,
+                recentBlockedEvents = recentBlockedEvents,
+                filterSubscriptions = filterSubscriptions,
+                isSyncingFilters = isSyncingFilters,
+                isClearOnClose = isClearOnClose,
+                onToggleClearOnClose = { viewModel.toggleClearOnClose(it) },
+                onSyncFilters = { viewModel.syncFilterLists(context) },
+                onToggleFilterSubscription = { id, enabled -> viewModel.toggleFilterSubscription(context, id, enabled) },
+                onClearCacheAndCookies = { viewModel.clearBrowserCacheAndCookies(context, false) },
                 onNavigateBack = { navController.popBackStack() }
             )
         }
@@ -403,5 +428,22 @@ fun BrowserNavigation(
                 onNavigateBack = { navController.popBackStack() }
             )
         }
+    }
+
+    // Gemini Webpage Summary Bottom Sheet specifically for current URL
+    if (isSummaryBottomSheetOpen) {
+        WebpageSummaryBottomSheet(
+            url = activeTab.url,
+            pageTitle = activeTab.title,
+            summaryMessage = latestSummaryMessage,
+            isThinking = isAiThinking,
+            onRegenerate = { viewModel.summarizeActiveUrl(activeTab.url, activeTab.title) },
+            onAskDeepQuestion = { prompt ->
+                viewModel.openAiAssistant(AiTaskType.DEEP_REASONING, prompt)
+                viewModel.dismissSummaryBottomSheet()
+                navController.navigate(AegisRoutes.AI_ASSISTANT) { launchSingleTop = true }
+            },
+            onDismiss = { viewModel.dismissSummaryBottomSheet() }
+        )
     }
 }
