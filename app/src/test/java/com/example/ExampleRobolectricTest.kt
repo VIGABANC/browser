@@ -58,10 +58,15 @@ class ExampleRobolectricTest {
 
   @Test
   fun `verify media extractor engine produces multiple stream formats`() {
-    val formats = MediaExtractorEngine.generateAvailableFormats("Test Video", "https://example.com/video.mp4", 120L)
-    assertTrue(formats.isNotEmpty())
-    assertTrue(formats.any { it.isAudioOnly && it.container == "mp3" })
-    assertTrue(formats.any { !it.isAudioOnly && it.qualityLabel.contains("1080p") })
+    val videoFormats = MediaExtractorEngine.generateAvailableFormats("Test Video", "https://example.com/video.mp4")
+    assertTrue(videoFormats.isNotEmpty())
+    assertEquals("mp4", videoFormats.first().container)
+    assertFalse(videoFormats.first().isAudioOnly)
+
+    val audioFormats = MediaExtractorEngine.generateAvailableFormats("Test Audio", "https://example.com/audio.mp3")
+    assertTrue(audioFormats.isNotEmpty())
+    assertEquals("mp3", audioFormats.first().container)
+    assertTrue(audioFormats.first().isAudioOnly)
   }
 
   @Test

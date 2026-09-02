@@ -569,69 +569,35 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     // Media Sniffer & Grabber Integration
     // -------------------------------------------------------------
     fun onMediaDetectedFromJs(jsonPayload: String) {
-        try {
-            val jsonArray = if (jsonPayload.startsWith("[")) org.json.JSONArray(jsonPayload) else org.json.JSONArray("[$jsonPayload]")
-            val detected = mutableListOf<DetectedMedia>()
-
-            for (i in 0 until jsonArray.length()) {
-                val obj = jsonArray.getJSONObject(i)
-                val url = obj.optString("src", obj.optString("url", ""))
-                if (url.isNotBlank()) {
-                    val title = obj.optString("title", activeTab.value.title)
-                    val mime = obj.optString("mimeType", "video/mp4")
-                    val duration = obj.optLong("duration", 0L).let { if (it > 0) it else 210L }
-                    
-                    val typeStr = obj.optString("type", "dom")
-                    val detectionSource = when (typeStr) {
-                        "dom" -> com.example.data.model.DetectionSource.DOM
-                        "blob" -> com.example.data.model.DetectionSource.NETWORK
-                        "manifest" -> com.example.data.model.DetectionSource.MANIFEST
-                        "iframe" -> com.example.data.model.DetectionSource.IFRAME
-                        "mediasource" -> com.example.data.model.DetectionSource.MEDIASOURCE_HOOK
-                        else -> com.example.data.model.DetectionSource.DOM
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val detected = com.example.data.downloader.MediaDetectionEngine.processDomMediaPayload(
+                jsonPayload,
+                activeTab.value.url
+            )
+            
+            if (detected != null) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    updateActiveTab { tab ->
+                        val updatedList = tab.detectedMediaList.toMutableList()
+                        val existing = updatedList.indexOfFirst { it.url == detected.url }
+                        if (existing != -1) {
+                            updatedList[existing] = detected
+                        } else {
+                            updatedList.add(detected)
+                        }
+                        
+                        val finalDeduplicated = com.example.data.downloader.MediaDetectionEngine.deduplicateAndRank(updatedList)
+                        tab.copy(detectedMediaList = finalDeduplicated)
                     }
-                    
-                    val mediaType = when {
-                        typeStr == "blob" -> com.example.data.model.MediaType.BLOB
-                        typeStr == "manifest" && url.contains(".m3u8") -> com.example.data.model.MediaType.HLS
-                        typeStr == "manifest" && url.contains(".mpd") -> com.example.data.model.MediaType.DASH
-                        mime.startsWith("audio/") -> com.example.data.model.MediaType.AUDIO
-                        else -> com.example.data.model.MediaType.VIDEO
-                    }
-
-                    val formats = com.example.data.downloader.MediaExtractorEngine.generateAvailableFormats(title, url, duration)
-
-                    val hashId = hashUrl(url)
-                    detected.add(
-                        DetectedMedia(
-                            id = hashId,
-                            url = url,
-                            type = mediaType,
-                            source = detectionSource,
-                            title = title,
-                            pageUrl = activeTab.value.url,
-                            mimeType = mime,
-                            duration = duration,
-                            formats = formats,
-                            domain = activeTab.value.url.substringAfter("://").substringBefore("/")
-                        )
-                    )
                 }
             }
-
-            if (detected.isNotEmpty()) {
-                updateActiveTab { tab ->
-                    val combined = (tab.detectedMediaList + detected).distinctBy { it.url }
-                    tab.copy(detectedMediaList = com.example.data.downloader.MediaExtractorEngine.deduplicateMedia(combined))
-                }
-            }
-        } catch (_: Exception) {}
+        }
     }
 
     fun onNetworkMediaDetected(media: DetectedMedia) {
         updateActiveTab { tab ->
             val updated = (tab.detectedMediaList + media).distinctBy { it.url }
-            tab.copy(detectedMediaList = com.example.data.downloader.MediaExtractorEngine.deduplicateMedia(updated))
+            tab.copy(detectedMediaList = com.example.data.downloader.MediaDetectionEngine.deduplicateAndRank(updated))
         }
     }
 

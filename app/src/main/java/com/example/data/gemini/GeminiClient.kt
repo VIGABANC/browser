@@ -197,6 +197,13 @@ object GeminiClient {
         }
     }
 
+    private fun sanitizeSnippet(raw: String): String {
+        return raw
+            .replace(Regex("""(?i)(password|secret|apikey|token|auth)\s*[:=]\s*['"][^'"]+['"]"""), "$1: [REDACTED]")
+            .replace(Regex("""\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b"""), "[CARD REDACTED]")
+            .take(4000)
+    }
+
     private fun buildUserContextPrompt(
         prompt: String,
         taskType: AiTaskType,
@@ -218,7 +225,7 @@ object GeminiClient {
             sb.append("Detected Media Stream Details:\n").append(detectedMediaContext).append("\n")
         }
         if (!pageContentSnippet.isNullOrBlank()) {
-            sb.append("\nPage Context Extract:\n").append(pageContentSnippet.take(4000)).append("\n")
+            sb.append("\nPage Context Extract:\n").append(sanitizeSnippet(pageContentSnippet)).append("\n")
         }
 
         return sb.toString()
@@ -236,75 +243,66 @@ object GeminiClient {
         val domain = pageUrl?.substringAfter("://")?.substringBefore("/") ?: "web domain"
         val title = pageTitle ?: "Web Page"
 
+        val notice = if (!apiErrorMessage.isNullOrBlank()) {
+            "Note: Gemini API returned an error ($apiErrorMessage). Showing local overview."
+        } else {
+            "Note: Set your Gemini API key in Secrets to enable live Gemini cloud synthesis."
+        }
+
         val thinking = """
-            [High-Thinking Engine: 6-Step Chain-of-Thought]
-            Step 1: Ingested active viewport context for target '${title}' ($domain).
-            Step 2: Evaluated task intent ($taskType) regarding prompt: "$prompt".
-            Step 3: Audited security perimeter (Brave Shields active, sandbox isolated, tracking scripts neutralized).
-            Step 4: Inspected media descriptors and encoding headers (${detectedMediaContext ?: "No high-bitrate stream conflict"}).
-            Step 5: Checked copyright/fair-use compliance matrix against Aegis Safe Mode policy.
-            Step 6: Synthesizing structural conclusions.
+            [Local Analysis Engine]
+            Evaluating available page metadata for target '${title}' ($domain).
+            Query: "$prompt"
+            Task: $taskType
         """.trimIndent()
 
         val answer = when (taskType) {
             AiTaskType.PAGE_SUMMARY -> """
-                ### 📑 Structured Page Synthesis: ${title}
+                ### 📑 Page Overview: ${title}
                 
-                **Key Findings & Overview:**
-                • **Primary Topic:** Web resource on ${domain} regarding ${title}.
-                • **Core Proposition:** ${prompt.ifBlank { "Analysis of page structure and content architecture." }}
+                **Page Information:**
+                • **Title:** ${title}
+                • **Domain:** ${domain}
+                • **Snippet Preview:** ${pageContentSnippet?.take(200)?.trim()?.ifBlank { "No text extracted." } ?: "No text extracted."}
                 
-                **Technical & Security Notes:**
-                • **Tracking Protection:** Aegis Shields blocked third-party advertising beacons and fingerprinting scripts on this domain.
-                • **Readability:** Clean text presentation with script isolation.
-                
-                ${if (!apiErrorMessage.isNullOrBlank()) "\n> *Note: Configured with Gemini 3.1 Pro High-Thinking Mode. Set your API key in Secrets to run live cloud inferences.*" else ""}
+                > *$notice*
             """.trimIndent()
 
             AiTaskType.MEDIA_ANALYSIS -> """
-                ### 🎬 Media & Audio Architecture Analysis
+                ### 🎬 Media Stream Overview
                 
-                **Stream Details:**
-                • **Source:** $domain
-                • **Media Stream:** ${detectedMediaContext ?: "Direct web media element (<video> / HLS stream)"}
+                **Detected Media Information:**
+                • **Domain:** $domain
+                • **Stream Details:** ${detectedMediaContext ?: "No direct stream detected on page."}
                 
-                **Format & Transcoding Recommendations:**
-                • **Video Archival:** 1080p (H.264/AAC in MP4 container) provides optimal compatibility across Android devices.
-                • **Audio Extraction:** MP3 at 320 kbps (or Opus 160 kbps) produces ~85% smaller file size with near-lossless acoustic fidelity for lectures and speech.
-                • **Safe Mode:** User attestation applies for personal archiving under fair-use compliance.
+                > *$notice*
             """.trimIndent()
 
             AiTaskType.COPYRIGHT_AUDIT -> """
-                ### ⚖️ Aegis Copyright & License Audit
+                ### ⚖️ Content & Domain Information: $domain
                 
-                **Domain Evaluation: $domain**
-                • **Jurisdiction & Attribution:** Content on this site is subject to author copyright unless released under Creative Commons (CC-BY, CC0) or Public Domain.
-                • **Aegis Safe Mode Status:** ${if (domain.contains("archive.org") || domain.contains("wikipedia")) "✅ Verified Whitelisted Open Repository" else "⚠️ External Source (Requires User Rights Attestation)"}
-                • **Fair Use Guidance:** Archiving for offline personal study or research is recognized in many jurisdictions; redistribution or commercial republication is strictly restricted.
+                • **Source URL:** ${pageUrl ?: domain}
+                • **Policy:** Please verify content licensing and permissions directly with the host domain before archiving or downloading media.
+                
+                > *$notice*
             """.trimIndent()
 
             AiTaskType.PRIVACY_SCAN -> """
-                ### 🛡️ Aegis Security & Privacy Audit: $domain
+                ### 🛡️ Privacy & Security Overview: $domain
                 
-                • **Connection:** HTTPS Encrypted with TLS 1.3
-                • **Third-Party Trackers:** Intercepted and blocked by Aegis Shields engine
-                • **Cookie Partitioning:** Cookies isolated to first-party context only
-                • **Fingerprinting Defense:** Canvas and WebGL randomized noise injected
-                • **Recommendation:** Maintain Shields ON for optimal speed and zero telemetry leakage.
+                • **Protocol:** ${if (pageUrl?.startsWith("https") == true) "HTTPS Secure Connection" else "HTTP Unencrypted Connection"}
+                • **Aegis Shields:** Active local blocking of known advertising & tracker hostlists.
+                
+                > *$notice*
             """.trimIndent()
 
             AiTaskType.DEEP_REASONING -> """
-                ### 🧠 Deep Reasoning Solution: ${prompt.ifBlank { title }}
+                ### 🧠 Query Analysis: ${prompt.ifBlank { title }}
                 
-                **Analysis & Strategic Assessment:**
-                1. **Context Breakdown:** Evaluating query parameters against active session on $domain.
-                2. **Core Insights:** 
-                   • High privacy posture prevents cross-site data collation.
-                   • Built-in media sniffer extracts direct streams without external telemetry.
-                   • Background queue scheduling ensures fair bandwidth allocation without degrading foreground browsing latency.
-                3. **Recommendation:** $prompt
+                • **Target:** ${title} ($domain)
+                • **Prompt:** $prompt
                 
-                ${if (!apiErrorMessage.isNullOrBlank()) "\n> *Configured with Gemini 3.1 Pro (High Thinking).* " else ""}
+                > *$notice*
             """.trimIndent()
         }
 
@@ -312,7 +310,7 @@ object GeminiClient {
             role = MessageRole.ASSISTANT,
             content = answer,
             thinkingTrace = thinking,
-            isThinkingExpanded = true,
+            isThinkingExpanded = false,
             taskType = taskType
         )
     }

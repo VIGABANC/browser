@@ -50,18 +50,12 @@ class DownloadWorker(
         // setForeground(createForegroundInfo()) - requires channel creation and permission, skipping for now to avoid crashes
 
         return try {
-            if (url.contains("youtube") || url.contains("youtu.be")) {
-                downloadWithYtdlp(url, outputPath, isAudioOnly)
-            } else if (url.contains(".m3u8")) {
-                downloadHls(url, outputPath)
-            } else {
-                downloadDirect(url, outputPath)
-            }
+            downloadDirect(url, outputPath)
         } catch (e: Exception) {
-            if (runAttemptCount < 5) {
+            if (runAttemptCount < 3) {
                 Result.retry()
             } else {
-                Result.failure(workDataOf("error" to e.message))
+                Result.failure(workDataOf("error" to (e.message ?: "Download failed")))
             }
         }
     }
@@ -78,7 +72,8 @@ class DownloadWorker(
 
         val totalBytes = connection.contentLengthLong
         val input = BufferedInputStream(connection.inputStream, BUFFER_SIZE)
-        val output = FileOutputStream(outputPath)
+        val partFile = File("$outputPath.part")
+        val output = FileOutputStream(partFile)
 
         var downloadedBytes = 0L
         var lastProgressTime = 0L
@@ -98,8 +93,7 @@ class DownloadWorker(
                 setProgress(workDataOf(
                     "progress" to progress,
                     "downloaded" to downloadedBytes,
-                    "total" to totalBytes,
-                    "speed" to "Calculating..."
+                    "total" to totalBytes
                 ))
                 lastProgressTime = now
             }
@@ -109,29 +103,21 @@ class DownloadWorker(
         output.close()
         input.close()
 
-        val file = File(outputPath)
-        if (!file.exists() || file.length() == 0L) {
+        val destFile = File(outputPath)
+        if (destFile.exists()) destFile.delete()
+        val renameOk = partFile.renameTo(destFile)
+        if (!renameOk) {
+            partFile.copyTo(destFile, overwrite = true)
+            partFile.delete()
+        }
+
+        if (!destFile.exists() || destFile.length() == 0L) {
             return Result.failure(workDataOf("error" to "Empty file downloaded"))
         }
 
-        insertToMediaStore(file, url)
+        insertToMediaStore(destFile, url)
 
         return Result.success(workDataOf("output_path" to outputPath))
-    }
-
-    private fun downloadWithYtdlp(url: String, outputPath: String, isAudioOnly: Boolean): Result {
-        // Placeholder for YTDLP integration
-        // In a real app this would call the process builder for python/yt-dlp
-        File(outputPath).writeText("Mock Yt-dlp download: $url")
-        insertToMediaStore(File(outputPath), url)
-        return Result.success()
-    }
-
-    private fun downloadHls(url: String, outputPath: String): Result {
-        // Placeholder for HLS parsing and downloading
-        File(outputPath).writeText("Mock HLS download: $url")
-        insertToMediaStore(File(outputPath), url)
-        return Result.success()
     }
 
     private fun insertToMediaStore(file: File, sourceUrl: String) {

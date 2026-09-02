@@ -99,12 +99,15 @@ data class MediaFormat(
     val bitrateKbps: Int,
     val approximateSizeMb: Float,
     val codec: String,
-    val directUrl: String = ""
+    val directUrl: String = "",
+    val audioDirectUrl: String? = null
 )
 
 enum class DownloadStatus {
     QUEUED,
     DOWNLOADING,
+    DOWNLOADING_AUDIO,
+    COMBINING_STREAMS,
     CONVERTING_AUDIO,
     COMPLETED,
     PAUSED,

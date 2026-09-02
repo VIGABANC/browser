@@ -236,7 +236,7 @@ fun ActiveDownloadBottomBar(
                         )
                     } else {
                         LinearProgressIndicator(
-                            progress = { activeItem.progressPercent / 100f },
+                            progress = { activeItem.progressPercent },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(6.dp)
@@ -264,7 +264,7 @@ fun ActiveDownloadBottomBar(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "${activeItem.progressPercent.toInt()}%",
+                            text = "${(activeItem.progressPercent * 100).toInt()}%",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,

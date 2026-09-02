@@ -2,17 +2,19 @@ package com.example.data.downloader
 
 import android.content.Context
 import android.os.Environment
+import com.example.data.local.AegisDatabase
+import com.example.data.local.entity.DownloadEntity
 import com.example.data.model.DownloadItem
 import com.example.data.model.DownloadStatus
 import com.example.data.model.MediaFormat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
@@ -21,10 +23,34 @@ class DownloadManager(
     private val context: Context,
     private val scope: CoroutineScope
 ) {
-    private val _downloads = MutableStateFlow<List<DownloadItem>>(createSampleDownloads())
-    val downloads: StateFlow<List<DownloadItem>> = _downloads.asStateFlow()
+    private val downloadDao = AegisDatabase.getDatabase(context).downloadDao()
+    private val directEngine = DirectDownloadEngine()
 
+    // In-memory real-time state for active transfers (speed, instant progress)
+    private val activeProgressFlow = MutableStateFlow<Map<String, DownloadProgress>>(emptyMap())
     private val activeJobs = mutableMapOf<String, Job>()
+
+    val downloads: StateFlow<List<DownloadItem>> = combine(
+        downloadDao.getAllDownloads(),
+        activeProgressFlow
+    ) { dbEntities, activeMap ->
+        dbEntities.map { entity ->
+            val baseModel = entity.toModel()
+            val liveProgress = activeMap[entity.id]
+            if (liveProgress != null) {
+                baseModel.copy(
+                    status = liveProgress.status,
+                    progressPercent = if (liveProgress.progressPercent >= 0f) liveProgress.progressPercent else baseModel.progressPercent,
+                    downloadedBytes = liveProgress.downloadedBytes,
+                    totalBytes = if (liveProgress.totalBytes > 0) liveProgress.totalBytes else baseModel.totalBytes,
+                    speedBps = liveProgress.speedBps,
+                    errorMessage = liveProgress.errorMessage ?: baseModel.errorMessage
+                )
+            } else {
+                baseModel
+            }
+        }
+    }.stateIn(scope, SharingStarted.Lazily, emptyList())
 
     fun enqueueDownload(
         title: String,
@@ -34,215 +60,223 @@ class DownloadManager(
         isSafeModeAttested: Boolean
     ): String {
         val id = UUID.randomUUID().toString()
-        val totalBytes = (format.approximateSizeMb * 1024 * 1024).toLong().coerceAtLeast(1024 * 512)
-        val cleanTitle = title.replace(Regex("[^a-zA-Z0-9._ -]"), "_").take(50)
-        val fileName = "$cleanTitle.${format.container}"
-        val destFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir, fileName)
+        val cleanTitle = title.replace(Regex("[^a-zA-Z0-9._ -]"), "_").take(50).ifBlank { "download" }
+        val ext = format.container.ifBlank { "mp4" }
+        val fileName = "$cleanTitle.$ext"
+        val destDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
+        val destFile = File(destDir, fileName)
 
         val item = DownloadItem(
             id = id,
-            title = title,
+            title = title.ifBlank { fileName },
             sourcePageUrl = sourcePageUrl,
             downloadUrl = downloadUrl,
             format = format,
             status = DownloadStatus.DOWNLOADING,
             progressPercent = 0f,
             downloadedBytes = 0L,
-            totalBytes = totalBytes,
+            totalBytes = (format.approximateSizeMb * 1024 * 1024).toLong().coerceAtLeast(0L),
             speedBps = 0L,
             localFilePath = destFile.absolutePath,
             startedAt = System.currentTimeMillis(),
             isSafeModeAttested = isSafeModeAttested
         )
 
-        _downloads.update { listOf(item) + it }
-        startDownloadJob(item)
+        scope.launch(Dispatchers.IO) {
+            downloadDao.insertOrUpdate(DownloadEntity.fromModel(item))
+            startRealDownload(item, destFile, 0L)
+        }
+
         return id
     }
 
-    private fun startDownloadJob(item: DownloadItem) {
+    private fun startRealDownload(item: DownloadItem, destFile: File, startOffset: Long) {
+        activeJobs[item.id]?.cancel()
+
         val job = scope.launch(Dispatchers.IO) {
-            try {
-                var currentBytes = item.downloadedBytes
-                val total = item.totalBytes
-                val targetDurationMs = (total / (1024 * 1024 * 2.5)).toLong().coerceIn(3000L, 8000L) // simulated ~2.5 MB/s
-                val stepCount = 50
-                val delayPerStep = targetDurationMs / stepCount
-                val bytesPerStep = (total - currentBytes) / stepCount
+            val targetUrl = item.format.directUrl.ifBlank { item.downloadUrl }
+            val audioUrl = item.format.audioDirectUrl
 
-                while (currentBytes < total) {
-                    delay(delayPerStep)
-                    currentBytes = (currentBytes + bytesPerStep + ((-50000..50000).random())).coerceAtMost(total)
-                    val progress = (currentBytes.toFloat() / total.toFloat()).coerceIn(0f, 1f)
-                    val currentSpeed = (bytesPerStep * (1000 / delayPerStep.coerceAtLeast(1))).coerceAtLeast(500_000)
+            if (audioUrl.isNullOrBlank()) {
+                // Single stream download
+                directEngine.downloadFile(
+                    url = targetUrl,
+                    destinationFile = destFile,
+                    startOffset = startOffset
+                ).collect { progress ->
+                    handleProgress(item, destFile, progress)
+                }
+            } else {
+                // Dual stream download
+                val videoDest = File(destFile.parentFile, "${destFile.name}.vid")
+                val audioDest = File(destFile.parentFile, "${destFile.name}.aud")
+                
+                var videoDone = false
+                var audioDone = false
+                var lastVideoProg = DownloadProgress(DownloadStatus.DOWNLOADING, 0, 0, 0f)
+                var lastAudioProg = DownloadProgress(DownloadStatus.DOWNLOADING, 0, 0, 0f)
 
-                    _downloads.update { list ->
-                        list.map {
-                            if (it.id == item.id) {
-                                it.copy(
-                                    status = DownloadStatus.DOWNLOADING,
-                                    progressPercent = progress,
-                                    downloadedBytes = currentBytes,
-                                    speedBps = currentSpeed
-                                )
-                            } else it
-                        }
+                val videoJob = launch {
+                    directEngine.downloadFile(targetUrl, videoDest, 0L).collect { p ->
+                        lastVideoProg = p
+                        if (p.status == DownloadStatus.COMPLETED) videoDone = true
+                        emitCombinedProgress(item, lastVideoProg, lastAudioProg)
                     }
                 }
-
-                // If audio extraction is requested (e.g. MP3 / AAC), run audio conversion step
-                if (item.format.isAudioOnly) {
-                    _downloads.update { list ->
-                        list.map {
-                            if (it.id == item.id) {
-                                it.copy(
-                                    status = DownloadStatus.CONVERTING_AUDIO,
-                                    speedBps = 0L
-                                )
-                            } else it
-                        }
-                    }
-                    delay(1200) // Simulated FFmpeg audio transcoding & ID3 tagging
-                }
-
-                // Finalize to local destination file placeholder
-                try {
-                    val file = File(item.localFilePath)
-                    file.parentFile?.mkdirs()
-                    if (!file.exists()) {
-                        file.writeText("Aegis Browser Downloaded Media: ${item.title}\nFormat: ${item.format.qualityLabel}\nSource: ${item.sourcePageUrl}\nTimestamp: ${System.currentTimeMillis()}")
-                    }
-                } catch (e: Exception) {
-                    // ignore file write errors
-                }
-
-                _downloads.update { list ->
-                    list.map {
-                        if (it.id == item.id) {
-                            it.copy(
-                                status = DownloadStatus.COMPLETED,
-                                progressPercent = 1f,
-                                downloadedBytes = total,
-                                speedBps = 0L,
-                                completedAt = System.currentTimeMillis()
-                            )
-                        } else it
+                
+                val audioJob = launch {
+                    directEngine.downloadFile(audioUrl, audioDest, 0L).collect { p ->
+                        lastAudioProg = p
+                        if (p.status == DownloadStatus.COMPLETED) audioDone = true
+                        emitCombinedProgress(item, lastVideoProg, lastAudioProg)
                     }
                 }
-            } catch (e: Exception) {
-                _downloads.update { list ->
-                    list.map {
-                        if (it.id == item.id) {
-                            it.copy(
-                                status = DownloadStatus.FAILED,
-                                errorMessage = e.localizedMessage ?: "Network interruption"
-                            )
-                        } else it
+                
+                videoJob.join()
+                audioJob.join()
+                
+                if (videoDone && audioDone) {
+                    activeProgressFlow.value = activeProgressFlow.value + (item.id to DownloadProgress(
+                        status = DownloadStatus.COMBINING_STREAMS,
+                        downloadedBytes = videoDest.length() + audioDest.length(),
+                        totalBytes = videoDest.length() + audioDest.length(),
+                        progressPercent = 1f
+                    ))
+                    
+                    val muxSuccess = MediaMuxerHelper.muxVideoAndAudio(videoDest, audioDest, destFile)
+                    if (muxSuccess) {
+                        videoDest.delete()
+                        audioDest.delete()
+                        
+                        val updated = item.copy(
+                            status = DownloadStatus.COMPLETED,
+                            progressPercent = 1f,
+                            downloadedBytes = destFile.length(),
+                            totalBytes = destFile.length(),
+                            completedAt = System.currentTimeMillis()
+                        )
+                        downloadDao.insertOrUpdate(DownloadEntity.fromModel(updated))
+                        activeProgressFlow.value = activeProgressFlow.value - item.id
+                    } else {
+                        val updated = item.copy(status = DownloadStatus.FAILED, errorMessage = "Muxing failed")
+                        downloadDao.insertOrUpdate(DownloadEntity.fromModel(updated))
+                        activeProgressFlow.value = activeProgressFlow.value - item.id
                     }
+                } else {
+                    val err = lastVideoProg.errorMessage ?: lastAudioProg.errorMessage ?: "Dual download failed"
+                    val updated = item.copy(status = DownloadStatus.FAILED, errorMessage = err)
+                    downloadDao.insertOrUpdate(DownloadEntity.fromModel(updated))
+                    activeProgressFlow.value = activeProgressFlow.value - item.id
                 }
-            } finally {
                 activeJobs.remove(item.id)
             }
         }
         activeJobs[item.id] = job
     }
+    
+    private suspend fun emitCombinedProgress(item: DownloadItem, vp: DownloadProgress, ap: DownloadProgress) {
+        val totalDled = vp.downloadedBytes + ap.downloadedBytes
+        val totalTtl = (if (vp.totalBytes > 0) vp.totalBytes else 0) + (if (ap.totalBytes > 0) ap.totalBytes else 0)
+        val speed = vp.speedBps + ap.speedBps
+        val pct = if (totalTtl > 0) (totalDled.toFloat() / totalTtl).coerceIn(0f, 1f) else 0f
+        
+        activeProgressFlow.value = activeProgressFlow.value + (item.id to DownloadProgress(
+            status = DownloadStatus.DOWNLOADING,
+            downloadedBytes = totalDled,
+            totalBytes = totalTtl,
+            progressPercent = pct,
+            speedBps = speed
+        ))
+    }
+
+    private suspend fun handleProgress(item: DownloadItem, destFile: File, progress: DownloadProgress) {
+        activeProgressFlow.value = activeProgressFlow.value + (item.id to progress)
+
+        if (progress.status == DownloadStatus.COMPLETED) {
+            val updated = item.copy(
+                status = DownloadStatus.COMPLETED,
+                progressPercent = 1f,
+                downloadedBytes = destFile.length(),
+                totalBytes = destFile.length(),
+                completedAt = System.currentTimeMillis()
+            )
+            downloadDao.insertOrUpdate(DownloadEntity.fromModel(updated))
+            activeProgressFlow.value = activeProgressFlow.value - item.id
+            activeJobs.remove(item.id)
+        } else if (progress.status == DownloadStatus.FAILED) {
+            val updated = item.copy(
+                status = DownloadStatus.FAILED,
+                errorMessage = progress.errorMessage ?: "Network transfer interrupted"
+            )
+            downloadDao.insertOrUpdate(DownloadEntity.fromModel(updated))
+            activeProgressFlow.value = activeProgressFlow.value - item.id
+            activeJobs.remove(item.id)
+        }
+    }
 
     fun pauseDownload(id: String) {
         activeJobs[id]?.cancel()
         activeJobs.remove(id)
-        _downloads.update { list ->
-            list.map {
-                if (it.id == id && it.status == DownloadStatus.DOWNLOADING) {
-                    it.copy(status = DownloadStatus.PAUSED, speedBps = 0L)
-                } else it
+        activeProgressFlow.value = activeProgressFlow.value - id
+
+        scope.launch(Dispatchers.IO) {
+            val entity = downloadDao.getDownloadById(id)
+            if (entity != null && entity.status == DownloadStatus.DOWNLOADING.name) {
+                downloadDao.updateDownload(entity.copy(status = DownloadStatus.PAUSED.name))
             }
         }
     }
 
     fun resumeDownload(id: String) {
-        val item = _downloads.value.firstOrNull { it.id == id } ?: return
-        if (item.status == DownloadStatus.PAUSED || item.status == DownloadStatus.FAILED) {
-            _downloads.update { list ->
-                list.map {
-                    if (it.id == id) it.copy(status = DownloadStatus.DOWNLOADING) else it
-                }
-            }
-            startDownloadJob(item)
+        scope.launch(Dispatchers.IO) {
+            val entity = downloadDao.getDownloadById(id) ?: return@launch
+            val item = entity.toModel()
+            val destFile = File(item.localFilePath)
+            val partFile = File(destFile.parentFile, "${destFile.name}.part")
+            val offset = if (partFile.exists()) partFile.length() else 0L
+
+            downloadDao.updateDownload(entity.copy(status = DownloadStatus.DOWNLOADING.name, errorMessage = null))
+            startRealDownload(item, destFile, offset)
         }
     }
 
     fun cancelDownload(id: String) {
         activeJobs[id]?.cancel()
         activeJobs.remove(id)
-        _downloads.update { list ->
-            list.filterNot { it.id == id }
+        activeProgressFlow.value = activeProgressFlow.value - id
+
+        scope.launch(Dispatchers.IO) {
+            val entity = downloadDao.getDownloadById(id)
+            if (entity != null) {
+                val destFile = File(entity.localFilePath)
+                val partFile = File(destFile.parentFile, "${destFile.name}.part")
+                if (partFile.exists()) partFile.delete()
+                downloadDao.deleteById(id)
+            }
         }
     }
 
     fun retryDownload(id: String) {
-        val item = _downloads.value.firstOrNull { it.id == id } ?: return
-        val resetItem = item.copy(
-            status = DownloadStatus.DOWNLOADING,
-            progressPercent = 0f,
-            downloadedBytes = 0L,
-            errorMessage = null
-        )
-        _downloads.update { list ->
-            list.map { if (it.id == id) resetItem else it }
+        scope.launch(Dispatchers.IO) {
+            val entity = downloadDao.getDownloadById(id) ?: return@launch
+            val item = entity.toModel().copy(
+                status = DownloadStatus.DOWNLOADING,
+                progressPercent = 0f,
+                downloadedBytes = 0L,
+                errorMessage = null
+            )
+            val destFile = File(item.localFilePath)
+            val partFile = File(destFile.parentFile, "${destFile.name}.part")
+            if (partFile.exists()) partFile.delete()
+
+            downloadDao.insertOrUpdate(DownloadEntity.fromModel(item))
+            startRealDownload(item, destFile, 0L)
         }
-        startDownloadJob(resetItem)
     }
 
     fun clearCompleted() {
-        _downloads.update { list ->
-            list.filterNot { it.status == DownloadStatus.COMPLETED }
+        scope.launch(Dispatchers.IO) {
+            downloadDao.clearCompleted()
         }
-    }
-
-    private fun createSampleDownloads(): List<DownloadItem> {
-        return listOf(
-            DownloadItem(
-                id = "sample-1",
-                title = "NASA James Webb Space Telescope Deep Field 4K",
-                sourcePageUrl = "https://archive.org/details/nasa-jwst-deep-field",
-                downloadUrl = "https://archive.org/download/nasa-jwst/jwst_1080p.mp4",
-                format = MediaFormat(
-                    id = "f-1",
-                    qualityLabel = "1080p Full HD",
-                    resolution = "1920x1080",
-                    container = "mp4",
-                    isAudioOnly = false,
-                    bitrateKbps = 3800,
-                    approximateSizeMb = 142.5f,
-                    codec = "H.264 / AAC"
-                ),
-                status = DownloadStatus.COMPLETED,
-                progressPercent = 1f,
-                downloadedBytes = 142_500_000L,
-                totalBytes = 142_500_000L,
-                completedAt = System.currentTimeMillis() - 3600_000L
-            ),
-            DownloadItem(
-                id = "sample-2",
-                title = "LibriVox: The Art of War (Full Audiobook)",
-                sourcePageUrl = "https://librivox.org/the-art-of-war-by-sun-tzu/",
-                downloadUrl = "https://librivox.org/download/artofwar.mp3",
-                format = MediaFormat(
-                    id = "f-2",
-                    qualityLabel = "MP3 Audio (320 kbps HQ)",
-                    resolution = "Audio Only",
-                    container = "mp3",
-                    isAudioOnly = true,
-                    bitrateKbps = 320,
-                    approximateSizeMb = 48.2f,
-                    codec = "MP3 (LAME CBR)"
-                ),
-                status = DownloadStatus.COMPLETED,
-                progressPercent = 1f,
-                downloadedBytes = 48_200_000L,
-                totalBytes = 48_200_000L,
-                completedAt = System.currentTimeMillis() - 7200_000L
-            )
-        )
     }
 }

@@ -226,6 +226,16 @@ fun MediaGrabberBottomSheet(
                                         fontSize = 10.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    val formatsList = media.formats
+                                    if (formatsList.isNotEmpty()) {
+                                        Text(
+                                            text = formatsList.joinToString(", ") { "${it.qualityLabel} (${it.container})" },
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = AegisCyanPrimary
+                                        )
+                                    }
                                 }
                             }
                             

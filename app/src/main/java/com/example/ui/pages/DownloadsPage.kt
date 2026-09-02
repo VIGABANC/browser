@@ -416,7 +416,7 @@ private fun DownloadItemCard(
         border = androidx.compose.foundation.BorderStroke(
             width = 1.dp,
             color = when (item.status) {
-                DownloadStatus.DOWNLOADING, DownloadStatus.CONVERTING_AUDIO -> AegisCyanPrimary.copy(alpha = 0.5f)
+                DownloadStatus.DOWNLOADING, DownloadStatus.DOWNLOADING_AUDIO, DownloadStatus.COMBINING_STREAMS, DownloadStatus.CONVERTING_AUDIO -> AegisCyanPrimary.copy(alpha = 0.5f)
                 DownloadStatus.COMPLETED -> AegisEmeraldSafe.copy(alpha = 0.3f)
                 DownloadStatus.FAILED -> MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
                 else -> MaterialTheme.colorScheme.surfaceVariant
@@ -480,7 +480,7 @@ private fun DownloadItemCard(
                 // Action Controls
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     when (item.status) {
-                        DownloadStatus.DOWNLOADING, DownloadStatus.QUEUED, DownloadStatus.CONVERTING_AUDIO -> {
+                        DownloadStatus.DOWNLOADING, DownloadStatus.DOWNLOADING_AUDIO, DownloadStatus.COMBINING_STREAMS, DownloadStatus.QUEUED, DownloadStatus.CONVERTING_AUDIO -> {
                             IconButton(onClick = onPause) {
                                 Icon(Icons.Default.Pause, contentDescription = "Mettre en pause", tint = AegisAmberSecondary)
                             }
@@ -519,7 +519,7 @@ private fun DownloadItemCard(
             if (item.status == DownloadStatus.DOWNLOADING || item.status == DownloadStatus.PAUSED || item.status == DownloadStatus.CONVERTING_AUDIO) {
                 Spacer(modifier = Modifier.height(10.dp))
                 LinearProgressIndicator(
-                    progress = { item.progressPercent / 100f },
+                    progress = { item.progressPercent },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(6.dp)
@@ -533,8 +533,12 @@ private fun DownloadItemCard(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = if (item.status == DownloadStatus.CONVERTING_AUDIO) "Conversion audio en cours..."
-                        else "${item.progressPercent.toInt()}% • ${(item.speedBps / 1024)} KB/s",
+                        text = when (item.status) {
+                            DownloadStatus.CONVERTING_AUDIO -> "Conversion audio en cours..."
+                            DownloadStatus.COMBINING_STREAMS -> "Multiplexage A/V en cours..."
+                            DownloadStatus.DOWNLOADING_AUDIO -> "Téléchargement audio... ${(item.progressPercent * 100).toInt()}% • ${(item.speedBps / 1024)} KB/s"
+                            else -> "${(item.progressPercent * 100).toInt()}% • ${(item.speedBps / 1024)} KB/s"
+                        },
                         fontSize = 11.sp,
                         color = AegisCyanPrimary
                     )

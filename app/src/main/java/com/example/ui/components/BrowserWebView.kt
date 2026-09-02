@@ -31,22 +31,16 @@ import java.io.File
 
 class AegisJsBridge(
     private val onMediaDetectedCallback: (String) -> Unit,
-    private val onReaderContentCallback: (String) -> Unit,
-    private val onLoginFormDetectedCallback: (String, String, String) -> Unit
+    private val onReaderContentCallback: (String) -> Unit
 ) {
     @JavascriptInterface
-    fun onMediaDetected(jsonPayload: String) {
+    fun onMediaFound(jsonPayload: String) {
         onMediaDetectedCallback(jsonPayload)
     }
 
     @JavascriptInterface
     fun onReaderContentExtracted(jsonPayload: String) {
         onReaderContentCallback(jsonPayload)
-    }
-
-    @JavascriptInterface
-    fun onLoginFormDetected(domain: String, username: String, pass: String) {
-        onLoginFormDetectedCallback(domain, username, pass)
     }
 }
 
@@ -69,7 +63,7 @@ fun BrowserWebView(
     onNetworkMediaDetected: (DetectedMedia) -> Unit,
     onPageTextExtracted: (String) -> Unit,
     onReaderContentExtracted: (String) -> Unit,
-    onLoginFormDetected: (domain: String, user: String, pass: String) -> Unit,
+    onLoginFormDetected: (domain: String, user: String, pass: String) -> Unit = { _, _, _ -> },
     onFindMatchCounted: (activeMatchIndex: Int, totalMatches: Int) -> Unit,
     onBlockAd: () -> Unit = {},
     onBlockTracker: () -> Unit = {},
@@ -118,6 +112,8 @@ fun BrowserWebView(
                 builtInZoomControls = true
                 displayZoomControls = false
                 mediaPlaybackRequiresUserGesture = false
+                allowFileAccess = false
+                allowContentAccess = false
                 mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                 cacheMode = if (tab.isIncognito) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
             }
@@ -129,8 +125,7 @@ fun BrowserWebView(
             addJavascriptInterface(
                 AegisJsBridge(
                     onMediaDetectedCallback = onMediaDetected,
-                    onReaderContentCallback = onReaderContentExtracted,
-                    onLoginFormDetectedCallback = onLoginFormDetected
+                    onReaderContentCallback = onReaderContentExtracted
                 ),
                 "AegisBridge"
             )
@@ -220,11 +215,28 @@ fun BrowserWebView(
                 val uri = request?.url ?: return false
                 val scheme = uri.scheme?.lowercase() ?: return false
 
-                // Disallow direct file:// access from untrusted web contexts
-                if (scheme == "file") {
+                // Disallow dangerous or untrusted schemes
+                if (scheme == "file" || scheme == "content" || scheme == "javascript") {
+                    return true
+                }
+                if (scheme != "http" && scheme != "https" && scheme != "about") {
+                    try {
+                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
+                        intent.addCategory(android.content.Intent.CATEGORY_BROWSABLE)
+                        context.startActivity(intent)
+                    } catch (_: Exception) {}
                     return true
                 }
                 return false
+            }
+
+            override fun onReceivedSslError(
+                view: WebView?,
+                handler: android.webkit.SslErrorHandler?,
+                error: android.net.http.SslError?
+            ) {
+                // Fail closed on SSL errors for user security
+                handler?.cancel()
             }
 
             override fun shouldInterceptRequest(
@@ -336,7 +348,7 @@ fun BrowserWebView(
                 super.onProgressChanged(view, newProgress)
                 onProgressChanged(newProgress)
                 if (newProgress > 60) {
-                    view?.evaluateJavascript(AdBlockManager.MEDIA_SNIFFER_JS, null)
+                    view?.evaluateJavascript(com.example.data.downloader.AdvancedMediaSniffer.INJECT_JS, null)
                 }
             }
 

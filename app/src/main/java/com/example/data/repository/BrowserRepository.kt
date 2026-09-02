@@ -28,7 +28,11 @@ class BrowserRepository(
 
     val allCredentials: Flow<List<AutoFillCredential>> = (autoFillDao?.getAllCredentials() ?: kotlinx.coroutines.flow.flowOf(emptyList())).map { list ->
         list.map { entity ->
-            val decrypted = AegisCryptoManager.decrypt(entity.encryptedPassword, entity.iv)
+            val decrypted = if (entity.encryptedPassword.startsWith("v2:")) {
+                AegisCryptoManager.decrypt(entity.encryptedPassword)
+            } else {
+                AegisCryptoManager.decryptLegacy(entity.encryptedPassword, entity.iv)
+            }
             AutoFillCredential(
                 id = entity.id,
                 domain = entity.domain,
@@ -49,14 +53,14 @@ class BrowserRepository(
     ): Long {
         if (autoFillDao == null || domain.isBlank() || username.isBlank() || plainPassword.isBlank()) return -1L
         val cleanDomain = domain.removePrefix("https://").removePrefix("http://").removePrefix("www.").substringBefore("/")
-        val (cipherText, iv) = AegisCryptoManager.encrypt(plainPassword)
+        val cipherPayload = AegisCryptoManager.encrypt(plainPassword)
         return autoFillDao.insertCredential(
             AutoFillEntity(
                 domain = cleanDomain,
                 siteTitle = siteTitle.ifBlank { cleanDomain },
                 username = username,
-                encryptedPassword = cipherText,
-                iv = iv,
+                encryptedPassword = cipherPayload,
+                iv = "v2",
                 updatedAt = System.currentTimeMillis()
             )
         )
@@ -67,7 +71,17 @@ class BrowserRepository(
         val cleanDomain = domain.removePrefix("https://").removePrefix("http://").removePrefix("www.").substringBefore("/")
         val entities = autoFillDao.getCredentialsForDomain(cleanDomain)
         return entities.map { entity ->
-            val decrypted = AegisCryptoManager.decrypt(entity.encryptedPassword, entity.iv)
+            val decrypted = if (entity.encryptedPassword.startsWith("v2:")) {
+                AegisCryptoManager.decrypt(entity.encryptedPassword)
+            } else {
+                val legacyDec = AegisCryptoManager.decryptLegacy(entity.encryptedPassword, entity.iv)
+                // If legacy decryption succeeded, re-encrypt to v2
+                if (legacyDec.isNotBlank()) {
+                    val newCipher = AegisCryptoManager.encrypt(legacyDec)
+                    autoFillDao.insertCredential(entity.copy(encryptedPassword = newCipher, iv = "v2"))
+                }
+                legacyDec
+            }
             AutoFillCredential(
                 id = entity.id,
                 domain = entity.domain,
